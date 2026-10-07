@@ -1,14 +1,25 @@
 //! Menu, affichage en jeu et écran de fin.
 
 use crate::audio::{Sfx, SfxBank};
-use crate::{action_pressed, AutoStart, GameState, Powers, Score};
+use crate::{action_pressed, AutoStart, GameFont, GameState, Powers, Score, VIEW_H};
 use bevy::color::Alpha;
 use bevy::prelude::*;
-use bevy::text::{FontSize, FontSource};
+use bevy::text::FontSize;
 
-pub fn font(size: f32) -> TextFont {
+/// `size` est exprimée pour une vue de 720 de haut ; elle suit la plus petite
+/// dimension de l'écran (portrait sur téléphone, paysage sur PC).
+pub fn font(game_font: &GameFont, size: f32) -> TextFont {
     TextFont {
-        font: FontSource::from("Luminari"),
+        font: game_font.0.clone(),
+        font_size: FontSize::VMin(size * 100.0 / VIEW_H),
+        ..default()
+    }
+}
+
+/// Police pour les textes du monde (`Text2d`), en unités monde.
+pub fn world_font(game_font: &GameFont, size: f32) -> TextFont {
+    TextFont {
+        font: game_font.0.clone(),
         font_size: FontSize::Px(size),
         ..default()
     }
@@ -73,7 +84,7 @@ fn fullscreen_column() -> Node {
     }
 }
 
-fn spawn_menu(mut commands: Commands, score: Res<Score>, auto: Res<AutoStart>) {
+fn spawn_menu(mut commands: Commands, score: Res<Score>, auto: Res<AutoStart>, game_font: Res<GameFont>) {
     if auto.0 {
         return;
     }
@@ -83,35 +94,35 @@ fn spawn_menu(mut commands: Commands, score: Res<Score>, auto: Res<AutoStart>) {
         children![
             (
                 Text::new("VIKING DASH"),
-                font(92.0),
+                font(&game_font, 92.0),
                 TextColor(GOLD),
                 shadow(),
                 Node { margin: UiRect::top(Val::Px(-120.0)), ..default() },
             ),
             (
                 Text::new("La Route de Valhalla"),
-                font(34.0),
+                font(&game_font, 34.0),
                 TextColor(PALE),
                 shadow(),
                 Node { margin: UiRect::bottom(Val::Px(30.0)), ..default() },
             ),
             (
                 Text::new("Clique ou ESPACE pour bondir de bouclier en bouclier.\nÉvite les créatures qui rôdent autour.\nRamasse Mjölnir, le bouclier runique et l'hydromel.\nEnchaîne les sauts vite : la fureur berserk rapporte de l'or."),
-                font(20.0),
+                font(&game_font, 20.0),
                 TextColor(Color::srgb(0.8, 0.85, 0.95)),
                 TextLayout::default().with_justify(Justify::Center),
                 shadow(),
             ),
             (
                 Text::new(format!("Record : {}", score.best)),
-                font(24.0),
+                font(&game_font, 24.0),
                 TextColor(GOLD),
                 shadow(),
                 Node { margin: UiRect::top(Val::Px(30.0)), ..default() },
             ),
             (
                 Text::new("- Clique pour partir à l'aventure -"),
-                font(26.0),
+                font(&game_font, 26.0),
                 TextColor(PALE),
                 shadow(),
                 Blink,
@@ -135,7 +146,7 @@ fn menu_input(
     }
 }
 
-fn spawn_hud(mut commands: Commands) {
+fn spawn_hud(mut commands: Commands, game_font: Res<GameFont>) {
     commands.spawn((
         Hud,
         Node {
@@ -146,8 +157,8 @@ fn spawn_hud(mut commands: Commands) {
             ..default()
         },
         children![
-            (Text::new("Niveau 0"), font(36.0), TextColor(PALE), shadow(), LevelText),
-            (Text::new("Or : 0"), font(22.0), TextColor(GOLD), shadow(), GoldText),
+            (Text::new("Niveau 0"), font(&game_font, 36.0), TextColor(PALE), shadow(), LevelText),
+            (Text::new("Or : 0"), font(&game_font, 22.0), TextColor(GOLD), shadow(), GoldText),
         ],
     ));
     commands.spawn((
@@ -158,7 +169,7 @@ fn spawn_hud(mut commands: Commands) {
             right: Val::Px(18.0),
             ..default()
         },
-        children![(Text::new("Record"), font(24.0), TextColor(GOLD), shadow(), BestText)],
+        children![(Text::new("Record"), font(&game_font, 24.0), TextColor(GOLD), shadow(), BestText)],
     ));
     commands.spawn((
         Hud,
@@ -169,7 +180,7 @@ fn spawn_hud(mut commands: Commands) {
             justify_content: JustifyContent::Center,
             ..default()
         },
-        children![(Text::new(""), font(22.0), TextColor(Color::srgb(0.6, 0.9, 1.0)), shadow(), PowerText)],
+        children![(Text::new(""), font(&game_font, 22.0), TextColor(Color::srgb(0.6, 0.9, 1.0)), shadow(), PowerText)],
     ));
 }
 
@@ -223,7 +234,7 @@ fn despawn_hud(mut commands: Commands, hud: Query<Entity, With<Hud>>) {
     }
 }
 
-fn spawn_game_over(mut commands: Commands, score: Res<Score>, mut delay: ResMut<GameOverDelay>) {
+fn spawn_game_over(mut commands: Commands, score: Res<Score>, mut delay: ResMut<GameOverDelay>, game_font: Res<GameFont>) {
     delay.0 = 0.0;
     let record_line = if score.new_record {
         "NOUVEAU RECORD ! Les skalds chanteront ton nom."
@@ -235,27 +246,27 @@ fn spawn_game_over(mut commands: Commands, score: Res<Score>, mut delay: ResMut<
         DespawnOnExit(GameState::GameOver),
         BackgroundColor(Color::srgba(0.0, 0.0, 0.02, 0.55)),
         children![
-            (Text::new("TOMBÉ AU COMBAT"), font(70.0), TextColor(Color::srgb(0.95, 0.25, 0.15)), shadow()),
+            (Text::new("TOMBÉ AU COMBAT"), font(&game_font, 70.0), TextColor(Color::srgb(0.95, 0.25, 0.15)), shadow()),
             (
                 Text::new("Les Valkyries t'emportent vers Valhalla..."),
-                font(26.0),
+                font(&game_font, 26.0),
                 TextColor(PALE),
                 shadow(),
                 Node { margin: UiRect::bottom(Val::Px(24.0)), ..default() },
             ),
-            (Text::new(format!("Boucliers franchis : {}", score.level)), font(34.0), TextColor(PALE), shadow()),
-            (Text::new(format!("Or amassé : {}", score.gold)), font(26.0), TextColor(GOLD), shadow()),
-            (Text::new(format!("Record : {}", score.best)), font(26.0), TextColor(GOLD), shadow()),
+            (Text::new(format!("Boucliers franchis : {}", score.level)), font(&game_font, 34.0), TextColor(PALE), shadow()),
+            (Text::new(format!("Or amassé : {}", score.gold)), font(&game_font, 26.0), TextColor(GOLD), shadow()),
+            (Text::new(format!("Record : {}", score.best)), font(&game_font, 26.0), TextColor(GOLD), shadow()),
             (
                 Text::new(record_line),
-                font(22.0),
+                font(&game_font, 22.0),
                 TextColor(Color::srgb(0.6, 1.0, 0.7)),
                 shadow(),
                 Node { margin: UiRect::top(Val::Px(10.0)), ..default() },
             ),
             (
                 Text::new("- Clique pour renaître -"),
-                font(28.0),
+                font(&game_font, 28.0),
                 TextColor(PALE),
                 shadow(),
                 Blink,

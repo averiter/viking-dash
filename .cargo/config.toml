@@ -1,0 +1,3 @@
+# Compilation web : `rand` a besoin du backend JavaScript de getrandom.
+[target.wasm32-unknown-unknown]
+rustflags = ['--cfg', 'getrandom_backend="wasm_js"']

@@ -1,7 +1,7 @@
 //! Le monde : boucliers-plateformes, créatures en orbite, bonus, génération
 //! procédurale et difficulté progressive.
 
-use crate::{player, ui, GameEntity, GameState, MainCamera, Powers, Score};
+use crate::{player, ui, GameEntity, GameFont, GameState, MainCamera, Powers, Score};
 use bevy::color::Luminance;
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
@@ -306,6 +306,7 @@ fn reset_world(
     shapes: Res<Shapes>,
     mut palette: ResMut<Palette>,
     mut mats: ResMut<Assets<ColorMaterial>>,
+    game_font: Res<GameFont>,
     mut cam: Single<&mut Transform, With<MainCamera>>,
 ) {
     for e in &olds {
@@ -327,7 +328,7 @@ fn reset_world(
     // `VIKING_START=n` permet de démarrer directement au niveau n (tests).
     let start = std::env::var("VIKING_START").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
     score.level = start;
-    spawn_platform(&mut commands, &mut draw, &mut track, &mut seen, start, Vec2::ZERO);
+    spawn_platform(&mut commands, &mut draw, &game_font, &mut track, &mut seen, start, Vec2::ZERO);
     player::spawn_player(&mut commands, &mut draw, Vec2::ZERO, start);
 }
 
@@ -338,28 +339,36 @@ fn extend_track(
     shapes: Res<Shapes>,
     mut palette: ResMut<Palette>,
     mut mats: ResMut<Assets<ColorMaterial>>,
-    cam: Single<&Transform, With<MainCamera>>,
+    game_font: Res<GameFont>,
+    cam: Single<(&Transform, &Projection), With<MainCamera>>,
 ) {
-    let cam_y = cam.translation.y;
+    let (cam_tf, projection) = *cam;
+    let cam_y = cam_tf.translation.y;
+    // Moitié de la hauteur visible : bien plus grande en portrait sur téléphone.
+    let half_h = match projection {
+        Projection::Orthographic(o) => o.area.height() / 2.0,
+        _ => crate::VIEW_H / 2.0,
+    }
+    .max(crate::VIEW_H / 2.0);
     let mut draw = Draw {
         shapes: &shapes,
         palette: &mut palette,
         mats: &mut mats,
     };
     let mut rng = rand::rng();
-    while track.next > 0 && track.last.y < cam_y + 1200.0 {
+    while track.next > 0 && track.last.y < cam_y + half_h + 700.0 {
         let n = track.next;
         let gap = 215.0 + (n.min(30) as f32) * 1.5;
         let lo = (track.last.x - 220.0).max(-230.0);
         let hi = (track.last.x + 220.0).min(230.0);
         let x = rng.random_range(lo..hi);
         let pos = Vec2::new(x, track.last.y + gap);
-        spawn_platform(&mut commands, &mut draw, &mut track, &mut seen, n, pos);
+        spawn_platform(&mut commands, &mut draw, &game_font, &mut track, &mut seen, n, pos);
     }
     // Nettoyage des plateformes passées.
     let mut i = 0;
     while i < track.platforms.len() {
-        if track.platforms[i].pos.y < cam_y - 900.0 {
+        if track.platforms[i].pos.y < cam_y - half_h - 400.0 {
             let e = track.platforms.remove(i).entity;
             commands.entity(e).despawn();
         } else {
@@ -371,6 +380,7 @@ fn extend_track(
 fn spawn_platform(
     commands: &mut Commands,
     draw: &mut Draw,
+    game_font: &GameFont,
     track: &mut Track,
     seen: &mut Seen,
     index: u32,
@@ -501,7 +511,7 @@ fn spawn_platform(
             };
             p.spawn((
                 Text2d::new(name),
-                ui::font(20.0),
+                ui::world_font(game_font, 20.0),
                 TextColor(Color::srgba(1.0, 0.92, 0.7, 0.85)),
                 anchor,
                 Transform::from_xyz(x, 0.0, 0.6),

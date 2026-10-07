@@ -1,11 +1,21 @@
 [package]
 name = "viking-dash"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
-bevy = { version = "0.19", features = ["wav", "system_font_discovery"] }
+bevy = { version = "0.19", features = ["wav"] }
 rand = "0.9"
+
+# Sur ordinateur : polices système (Luminari sur macOS).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bevy = { version = "0.19", features = ["system_font_discovery"] }
+
+# Sur le web : aléatoire via JavaScript, record dans localStorage.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom3 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+getrandom = { version = "0.4", features = ["wasm_js"] }
+web-sys = { version = "0.3", features = ["Window", "Storage"] }
 
 # Enable a small amount of optimization in the dev profile.
 [profile.dev]
@@ -18,3 +28,12 @@ opt-level = 3
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+# Build web : binaire compact.
+[profile.web]
+inherits = "release"
+opt-level = "s"
+lto = "fat"
+strip = true
+debug = false
+panic = "abort"

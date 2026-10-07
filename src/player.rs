@@ -3,7 +3,7 @@
 use crate::audio::{Sfx, SfxBank};
 use crate::fx::{self, Ragnarok, Shake};
 use crate::world::{Bonus, BonusKind, Draw, Enemy, Orbiter, Track, PLAYER_R};
-use crate::{action_pressed, save_best, AutoJump, GameEntity, GameState, MainCamera, Powers, Score};
+use crate::{action_pressed, save_best, AutoJump, GameEntity, GameFont, GameState, MainCamera, Powers, Score};
 use bevy::color::Luminance;
 use bevy::prelude::*;
 use rand::Rng;
@@ -168,6 +168,7 @@ fn advance_jump(
     mut shake: ResMut<Shake>,
     mut ragnarok: ResMut<Ragnarok>,
     sfx: Res<SfxBank>,
+    game_font: Res<GameFont>,
     mut q: Query<(&mut Player, &mut Transform)>,
     bonuses: Query<(Entity, &Bonus)>,
 ) {
@@ -221,6 +222,7 @@ fn advance_jump(
         score.gold += score.combo;
         fx::float_text(
             &mut commands,
+            &game_font,
             pos + Vec2::new(0.0, 50.0),
             &format!("BERSERK x{} !", score.combo),
             Color::srgb(1.0, 0.8, 0.2),
@@ -251,7 +253,7 @@ fn advance_jump(
                 ("HYDROMEL : le temps ralentit", Color::srgb(1.0, 0.75, 0.3))
             }
         };
-        fx::float_text(&mut commands, pos + Vec2::new(0.0, 80.0), text, color, 24.0);
+        fx::float_text(&mut commands, &game_font, pos + Vec2::new(0.0, 80.0), text, color, 24.0);
         fx::burst(&mut commands, pos, color, 16, 160.0, 5.0, 100.0, 0.7);
     }
 
@@ -260,7 +262,7 @@ fn advance_jump(
         ragnarok.0 = 2.6;
         shake.0 = 12.0;
         sfx.play(&mut commands, Sfx::Thunder, 0.8);
-        fx::float_text(&mut commands, pos + Vec2::new(0.0, 110.0), "RAGNARÖK !", Color::srgb(1.0, 0.25, 0.15), 44.0);
+        fx::float_text(&mut commands, &game_font, pos + Vec2::new(0.0, 110.0), "RAGNARÖK !", Color::srgb(1.0, 0.25, 0.15), 44.0);
     }
 }
 
@@ -280,6 +282,7 @@ fn check_collisions(
     mut shake: ResMut<Shake>,
     sfx: Res<SfxBank>,
     mut next: ResMut<NextState<GameState>>,
+    game_font: Res<GameFont>,
     mut q: Query<(&mut Player, &Transform)>,
     enemies: Query<(Entity, &Orbiter, &Enemy)>,
 ) {
@@ -302,7 +305,7 @@ fn check_collisions(
             commands.entity(e).despawn();
             sfx.play(&mut commands, Sfx::Clang, 0.7);
             fx::burst(&mut commands, epos, Color::srgb(0.6, 0.85, 1.0), 20, 240.0, 6.0, 150.0, 0.7);
-            fx::float_text(&mut commands, pos + Vec2::new(0.0, 60.0), "Le bouclier éclate !", Color::srgb(0.6, 0.85, 1.0), 22.0);
+            fx::float_text(&mut commands, &game_font, pos + Vec2::new(0.0, 60.0), "Le bouclier éclate !", Color::srgb(0.6, 0.85, 1.0), 22.0);
             shake.0 = 8.0;
             return;
         }
@@ -352,12 +355,18 @@ fn camera_follow(
     mut shake: ResMut<Shake>,
     state: Res<State<GameState>>,
     player: Query<&Transform, (With<Player>, Without<MainCamera>)>,
-    mut cam: Single<&mut Transform, With<MainCamera>>,
+    mut cam: Single<(&mut Transform, &Projection), With<MainCamera>>,
 ) {
     let dt = time.delta_secs();
     let Ok(ptf) = player.single() else { return };
+    let (cam, projection) = &mut *cam;
+    // Le viking reste dans le tiers inférieur de l'écran, quelle que soit sa hauteur.
+    let visible_h = match projection {
+        Projection::Orthographic(o) => o.area.height().max(crate::VIEW_H),
+        _ => crate::VIEW_H,
+    };
     let target_y = match state.get() {
-        GameState::Playing => ptf.translation.y + 150.0,
+        GameState::Playing => ptf.translation.y + visible_h * 0.21,
         GameState::Dying | GameState::GameOver => cam.translation.y,
         _ => 120.0,
     };

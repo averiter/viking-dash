@@ -4,6 +4,7 @@
 //! qui tournent autour. Inspiré du "Cochon d'Halloween", version viking.
 
 mod audio;
+#[cfg(not(target_arch = "wasm32"))]
 mod autotest;
 mod fx;
 mod player;
@@ -11,8 +12,8 @@ mod ui;
 mod world;
 
 use bevy::prelude::*;
+use bevy::text::FontSource;
 use bevy::window::WindowResolution;
-use std::path::PathBuf;
 
 /// États principaux du jeu.
 #[derive(States, Default, Debug, Clone, PartialEq, Eq, Hash)]
@@ -62,15 +63,39 @@ pub struct GameEntity;
 #[derive(Component)]
 pub struct MainCamera;
 
-/// Hauteur logique de la vue (la largeur s'adapte à la fenêtre).
+/// Police du jeu : Luminari (système) sur macOS, Fira Sans embarquée ailleurs et sur le web.
+#[derive(Resource)]
+pub struct GameFont(pub FontSource);
+
+/// Taille de référence : la vue fait toujours au moins 720 unités de haut.
 pub const VIEW_H: f32 = 720.0;
+/// Largeur minimale garantie (un bouclier au bord avec son second anneau reste visible).
+pub const VIEW_W_MIN: f32 = 780.0;
+
 
 fn main() {
-    App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
+    // `VIKING_WINDOW=390x844` force une taille de fenêtre (tests du mode portrait).
+    let (w, h) = std::env::var("VIKING_WINDOW")
+        .ok()
+        .and_then(|v| {
+            let (a, b) = v.split_once('x')?;
+            Some((a.parse().ok()?, b.parse().ok()?))
+        })
+        .unwrap_or((960, 720));
+    let mut app = App::new();
+    app
+        .add_plugins(DefaultPlugins.set(AssetPlugin {
+            // Pas de fichiers `.meta` : évite des requêtes 404 sur le web.
+            meta_check: bevy::asset::AssetMetaCheck::Never,
+            ..default()
+        }).set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Viking Dash — La Route de Valhalla".into(),
-                resolution: WindowResolution::new(960, 720),
+                resolution: WindowResolution::new(w, h),
+                // Web : le canvas remplit la page et le navigateur ne défile pas.
+                canvas: Some("#viking".into()),
+                fit_canvas_to_parent: true,
+                prevent_default_event_handling: true,
                 ..default()
             }),
             ..default()
@@ -87,8 +112,10 @@ fn main() {
             player::PlayerPlugin,
             fx::FxPlugin,
             ui::UiPlugin,
-            autotest::AutoTestPlugin,
-        ))
+        ));
+    #[cfg(not(target_arch = "wasm32"))]
+    app.add_plugins(autotest::AutoTestPlugin);
+    app.add_systems(PreStartup, load_font)
         .add_systems(Startup, (setup_camera, load_best, enter_menu))
         .run();
 }
@@ -98,8 +125,9 @@ fn setup_camera(mut commands: Commands) {
         Camera2d,
         MainCamera,
         Projection::Orthographic(OrthographicProjection {
-            scaling_mode: bevy::camera::ScalingMode::FixedVertical {
-                viewport_height: VIEW_H,
+            scaling_mode: bevy::camera::ScalingMode::AutoMin {
+                min_width: VIEW_W_MIN,
+                min_height: VIEW_H,
             },
             ..OrthographicProjection::default_2d()
         }),
@@ -107,25 +135,56 @@ fn setup_camera(mut commands: Commands) {
     ));
 }
 
+fn load_font(mut commands: Commands, asset_server: Res<AssetServer>) {
+    let source = if cfg!(target_os = "macos") {
+        FontSource::from("Luminari")
+    } else {
+        FontSource::Handle(asset_server.load("fonts/FiraSans-Bold.ttf"))
+    };
+    commands.insert_resource(GameFont(source));
+}
+
 fn enter_menu(mut next: ResMut<NextState<GameState>>) {
     next.set(GameState::Menu);
 }
 
-fn best_path() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".viking_dash_best"))
+#[cfg(not(target_arch = "wasm32"))]
+fn best_path() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".viking_dash_best"))
 }
 
-fn load_best(mut score: ResMut<Score>) {
-    if let Some(p) = best_path() {
-        if let Ok(s) = std::fs::read_to_string(p) {
-            score.best = s.trim().parse().unwrap_or(0);
-        }
-    }
+#[cfg(not(target_arch = "wasm32"))]
+fn read_best() -> Option<String> {
+    std::fs::read_to_string(best_path()?).ok()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn save_best(best: u32) {
     if let Some(p) = best_path() {
         let _ = std::fs::write(p, best.to_string());
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn local_storage() -> Option<web_sys::Storage> {
+    web_sys::window()?.local_storage().ok()?
+}
+
+#[cfg(target_arch = "wasm32")]
+fn read_best() -> Option<String> {
+    local_storage()?.get_item("viking_dash_best").ok()?
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn save_best(best: u32) {
+    if let Some(storage) = local_storage() {
+        let _ = storage.set_item("viking_dash_best", &best.to_string());
+    }
+}
+
+fn load_best(mut score: ResMut<Score>) {
+    if let Some(s) = read_best() {
+        score.best = s.trim().parse().unwrap_or(0);
     }
 }
 
