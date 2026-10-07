@@ -2,16 +2,17 @@
 //! secousses de caméra et éclairs du Ragnarök.
 
 use crate::world::{Draw, Palette, Shapes};
-use crate::{ui, GameEntity, GameFont, MainCamera, Score};
+use crate::{ui, GameEntity, GameFont, PlayerCam, MAX_PLAYERS};
+use bevy::camera::visibility::RenderLayers;
 use bevy::color::{Alpha, Luminance};
 use bevy::prelude::*;
 use bevy::sprite_render::AlphaMode2d;
 use rand::Rng;
 use std::f32::consts::PI;
 
-/// Intensité de secousse de caméra (décroît toute seule).
-#[derive(Resource, Default)]
-pub struct Shake(pub f32);
+/// Élément de ciel attaché à la caméra d'un joueur (chaque caméra a son propre ciel).
+#[derive(Component)]
+struct SkyOf(u8);
 
 /// Secondes restantes d'éclairs rouges.
 #[derive(Resource, Default)]
@@ -74,8 +75,7 @@ pub struct FxPlugin;
 
 impl Plugin for FxPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Shake>()
-            .init_resource::<Ragnarok>()
+        app.init_resource::<Ragnarok>()
             .add_systems(Startup, setup_sky)
             .add_systems(
                 Update,
@@ -104,41 +104,51 @@ fn setup_sky(
         mats: &mut mats,
     };
 
-    // Étoiles.
-    for _ in 0..140 {
-        let size = rng.random_range(0.8..2.4);
-        let pos = Vec2::new(rng.random_range(-720.0..720.0), rng.random_range(-400.0..1100.0));
-        commands.spawn((
-            d.circle(Color::srgba(1.0, 1.0, 0.95, 0.8), pos, -9.0, size),
-            Star { phase: rng.random_range(0.0..6.3), size },
-        ));
-    }
+    for id in 0..MAX_PLAYERS as u8 {
+        let layer = RenderLayers::layer(id as usize + 1);
 
-    // Aurore boréale : rideau de bandes translucides.
-    let tints = [
-        Color::srgba(0.30, 1.00, 0.60, 0.15),
-        Color::srgba(0.30, 0.85, 1.00, 0.13),
-        Color::srgba(0.70, 0.45, 1.00, 0.11),
-    ];
-    for i in 0..48 {
-        let x = -730.0 + i as f32 * 31.0;
-        commands.spawn((
-            d.rect(tints[i % 3], Vec2::new(x, 300.0), -8.0, Vec2::new(30.0, 150.0), 0.0),
-            AuroraBand(i),
-        ));
-    }
+        // Étoiles.
+        for _ in 0..140 {
+            let size = rng.random_range(0.8..2.4);
+            let pos = Vec2::new(rng.random_range(-720.0..720.0), rng.random_range(-400.0..1100.0));
+            commands.spawn((
+                d.circle(Color::srgba(1.0, 1.0, 0.95, 0.8), pos, -9.0, size),
+                Star { phase: rng.random_range(0.0..6.3), size },
+                SkyOf(id),
+                layer.clone(),
+            ));
+        }
 
-    // Neige.
-    for _ in 0..90 {
-        let pos = Vec2::new(rng.random_range(-720.0..720.0), rng.random_range(-380.0..380.0));
-        commands.spawn((
-            d.circle(Color::srgba(1.0, 1.0, 1.0, 0.75), pos, 30.0, rng.random_range(1.3..3.0)),
-            Snow {
-                speed: rng.random_range(25.0..70.0),
-                drift: rng.random_range(10.0..35.0),
-                phase: rng.random_range(0.0..6.3),
-            },
-        ));
+        // Aurore boréale : rideau de bandes translucides.
+        let tints = [
+            Color::srgba(0.30, 1.00, 0.60, 0.15),
+            Color::srgba(0.30, 0.85, 1.00, 0.13),
+            Color::srgba(0.70, 0.45, 1.00, 0.11),
+        ];
+        for i in 0..48 {
+            let x = -730.0 + i as f32 * 31.0;
+            commands.spawn((
+                d.rect(tints[i % 3], Vec2::new(x, 300.0), -8.0, Vec2::new(30.0, 150.0), 0.0),
+                AuroraBand(i),
+                SkyOf(id),
+                layer.clone(),
+            ));
+        }
+
+        // Neige.
+        for _ in 0..90 {
+            let pos = Vec2::new(rng.random_range(-720.0..720.0), rng.random_range(-380.0..380.0));
+            commands.spawn((
+                d.circle(Color::srgba(1.0, 1.0, 1.0, 0.75), pos, 30.0, rng.random_range(1.3..3.0)),
+                Snow {
+                    speed: rng.random_range(25.0..70.0),
+                    drift: rng.random_range(10.0..35.0),
+                    phase: rng.random_range(0.0..6.3),
+                },
+                SkyOf(id),
+                layer.clone(),
+            ));
+        }
     }
 
     // Montagnes (deux plans).
@@ -199,18 +209,22 @@ fn setup_sky(
             }
         });
 
-    // Voile de lumière plein écran pour le Ragnarök.
+    // Voile de lumière plein écran pour le Ragnarök (un par caméra, même matériau).
     let flash = mats.add(ColorMaterial {
         color: Color::srgba(1.0, 0.1, 0.05, 0.0),
         alpha_mode: AlphaMode2d::Blend,
         ..default()
     });
-    commands.spawn((
-        Flash,
-        Mesh2d(shapes.square.clone()),
-        MeshMaterial2d(flash.clone()),
-        Transform::from_xyz(0.0, 0.0, 40.0).with_scale(Vec3::new(4000.0, 4000.0, 1.0)),
-    ));
+    for id in 0..MAX_PLAYERS as u8 {
+        commands.spawn((
+            Flash,
+            SkyOf(id),
+            RenderLayers::layer(id as usize + 1),
+            Mesh2d(shapes.square.clone()),
+            MeshMaterial2d(flash.clone()),
+            Transform::from_xyz(0.0, 0.0, 40.0).with_scale(Vec3::new(4000.0, 4000.0, 1.0)),
+        ));
+    }
     commands.insert_resource(FlashMat(flash));
 }
 
@@ -276,57 +290,73 @@ fn float_texts(mut commands: Commands, time: Res<Time>, mut q: Query<(Entity, &m
 
 fn sky_follow(
     time: Res<Time>,
-    cam: Single<(&Transform, &Projection), (With<MainCamera>, Without<Star>, Without<Snow>, Without<AuroraBand>, Without<Flash>)>,
-    mut stars: Query<(&Star, &mut Transform), (Without<Snow>, Without<AuroraBand>, Without<Flash>)>,
-    mut snow: Query<(&Snow, &mut Transform), (Without<Star>, Without<AuroraBand>, Without<Flash>)>,
-    mut aurora: Query<(&AuroraBand, &mut Transform), (Without<Star>, Without<Snow>, Without<Flash>)>,
-    mut flash: Query<&mut Transform, (With<Flash>, Without<Star>, Without<Snow>, Without<AuroraBand>)>,
+    cams: Query<(&PlayerCam, &Transform, &Projection), (Without<Star>, Without<Snow>, Without<AuroraBand>, Without<Flash>)>,
+    mut stars: Query<(&Star, &SkyOf, &mut Transform), (Without<Snow>, Without<AuroraBand>, Without<Flash>)>,
+    mut snow: Query<(&Snow, &SkyOf, &mut Transform), (Without<Star>, Without<AuroraBand>, Without<Flash>)>,
+    mut aurora: Query<(&AuroraBand, &SkyOf, &mut Transform), (Without<Star>, Without<Snow>, Without<Flash>)>,
+    mut flash: Query<(&SkyOf, &mut Transform), (With<Flash>, Without<Star>, Without<Snow>, Without<AuroraBand>)>,
 ) {
     let t = time.elapsed_secs();
     let dt = time.delta_secs();
-    let (cam, projection) = *cam;
-    let cy = cam.translation.y;
-    // Hauteur visible : l'aurore reste dans le tiers supérieur, même en portrait.
-    let visible_h = match projection {
-        Projection::Orthographic(o) => o.area.height().max(crate::VIEW_H),
-        _ => crate::VIEW_H,
-    };
     let mut rng = rand::rng();
 
-    for (s, mut tf) in &mut stars {
-        if tf.translation.y < cy - visible_h * 0.6 {
-            tf.translation.y += visible_h * 0.6 + 1100.0;
-            tf.translation.x = rng.random_range(-720.0..720.0);
-        } else if tf.translation.y > cy + 1100.0 {
-            tf.translation.y -= visible_h * 0.6 + 1100.0;
+    for (cam, cam_tf, projection) in &cams {
+        let id = cam.0;
+        let cy = cam_tf.translation.y;
+        // Hauteur visible : l'aurore reste dans le tiers supérieur, même en portrait.
+        let visible_h = match projection {
+            Projection::Orthographic(o) => o.area.height().max(crate::VIEW_H),
+            _ => crate::VIEW_H,
+        };
+
+        for (s, sky, mut tf) in &mut stars {
+            if sky.0 != id {
+                continue;
+            }
+            if tf.translation.y < cy - visible_h * 0.6 {
+                tf.translation.y += visible_h * 0.6 + 1100.0;
+                tf.translation.x = rng.random_range(-720.0..720.0);
+            } else if tf.translation.y > cy + 1100.0 {
+                tf.translation.y -= visible_h * 0.6 + 1100.0;
+            }
+            let tw = 0.7 + 0.3 * (t * 2.0 + s.phase).sin();
+            tf.scale = Vec3::splat(s.size * tw);
         }
-        let tw = 0.7 + 0.3 * (t * 2.0 + s.phase).sin();
-        tf.scale = Vec3::splat(s.size * tw);
-    }
-    for (s, mut tf) in &mut snow {
-        tf.translation.y -= s.speed * dt;
-        tf.translation.x += s.drift * (t * 0.8 + s.phase).sin() * dt;
-        if tf.translation.y < cy - visible_h * 0.55 {
-            tf.translation.y = cy + visible_h * 0.55;
-            tf.translation.x = rng.random_range(-720.0..720.0);
-        } else if tf.translation.y > cy + visible_h * 0.56 {
-            tf.translation.y = cy - visible_h * 0.54;
+        for (s, sky, mut tf) in &mut snow {
+            if sky.0 != id {
+                continue;
+            }
+            tf.translation.y -= s.speed * dt;
+            tf.translation.x += s.drift * (t * 0.8 + s.phase).sin() * dt;
+            if tf.translation.y < cy - visible_h * 0.55 {
+                tf.translation.y = cy + visible_h * 0.55;
+                tf.translation.x = rng.random_range(-720.0..720.0);
+            } else if tf.translation.y > cy + visible_h * 0.56 {
+                tf.translation.y = cy - visible_h * 0.54;
+            }
         }
-    }
-    for (b, mut tf) in &mut aurora {
-        let i = b.0 as f32;
-        let h = 150.0 + 80.0 * (t * 0.6 + i * 0.35).sin() + 40.0 * (t * 1.3 + i * 0.9).sin();
-        tf.scale = Vec3::new(30.0, h, 1.0);
-        tf.translation.y = cy + visible_h * 0.32 + 30.0 * (t * 0.25 + i * 0.3).sin();
-    }
-    for mut tf in &mut flash {
-        tf.translation.x = cam.translation.x;
-        tf.translation.y = cy;
+        for (b, sky, mut tf) in &mut aurora {
+            if sky.0 != id {
+                continue;
+            }
+            let i = b.0 as f32;
+            let h = 150.0 + 80.0 * (t * 0.6 + i * 0.35).sin() + 40.0 * (t * 1.3 + i * 0.9).sin();
+            tf.scale = Vec3::new(30.0, h, 1.0);
+            tf.translation.y = cy + visible_h * 0.32 + 30.0 * (t * 0.25 + i * 0.3).sin();
+        }
+        for (sky, mut tf) in &mut flash {
+            if sky.0 != id {
+                continue;
+            }
+            tf.translation.x = cam_tf.translation.x;
+            tf.translation.y = cy;
+        }
     }
 }
 
-fn sky_tint(score: Res<Score>, ragnarok: Res<Ragnarok>, mut clear: ResMut<ClearColor>) {
-    let k = (score.level as f32 / 45.0).clamp(0.0, 1.0);
+fn sky_tint(players: Query<&crate::player::Player>, ragnarok: Res<Ragnarok>, mut clear: ResMut<ClearColor>) {
+    let level = players.iter().map(|p| p.level).max().unwrap_or(0);
+    let k = (level as f32 / 45.0).clamp(0.0, 1.0);
     let a = Vec3::new(0.03, 0.06, 0.14);
     let b = Vec3::new(0.10, 0.03, 0.14);
     let mut c = a.lerp(b, k);

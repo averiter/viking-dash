@@ -1,7 +1,8 @@
 //! Le monde : boucliers-plateformes, créatures en orbite, bonus, génération
 //! procédurale et difficulté progressive.
 
-use crate::{player, ui, GameEntity, GameFont, GameState, MainCamera, Powers, Score};
+use crate::player::{self, Player};
+use crate::{ui, GameEntity, GameFont, GameMode, GameState, PlayerCam, Score};
 use bevy::color::Luminance;
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
@@ -33,6 +34,7 @@ impl Plugin for WorldPlugin {
             .init_resource::<Seen>()
             .add_systems(PreStartup, setup_shapes)
             .add_systems(OnEnter(GameState::Menu), reset_world)
+            .add_systems(OnEnter(GameState::Playing), spawn_missing_players)
             .add_systems(
                 Update,
                 (extend_track, orbit_enemies, animate_wobble, animate_bob),
@@ -302,24 +304,21 @@ fn reset_world(
     mut track: ResMut<Track>,
     mut seen: ResMut<Seen>,
     mut score: ResMut<Score>,
-    mut powers: ResMut<Powers>,
     shapes: Res<Shapes>,
     mut palette: ResMut<Palette>,
     mut mats: ResMut<Assets<ColorMaterial>>,
     game_font: Res<GameFont>,
-    mut cam: Single<&mut Transform, With<MainCamera>>,
+    mut cams: Query<&mut Transform, With<PlayerCam>>,
 ) {
     for e in &olds {
         commands.entity(e).despawn();
     }
     *track = Track::default();
     seen.0 = 0;
-    score.level = 0;
-    score.gold = 0;
-    score.combo = 0;
     score.new_record = false;
-    *powers = Powers::default();
-    cam.translation = Vec3::new(0.0, 120.0, 0.0);
+    for mut cam in &mut cams {
+        cam.translation = Vec3::new(0.0, 120.0, 0.0);
+    }
     let mut draw = Draw {
         shapes: &shapes,
         palette: &mut palette,
@@ -327,9 +326,37 @@ fn reset_world(
     };
     // `VIKING_START=n` permet de démarrer directement au niveau n (tests).
     let start = std::env::var("VIKING_START").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
-    score.level = start;
     spawn_platform(&mut commands, &mut draw, &game_font, &mut track, &mut seen, start, Vec2::ZERO);
-    player::spawn_player(&mut commands, &mut draw, Vec2::ZERO, start);
+    // Le joueur 1 est visible dès le menu ; le joueur 2 arrive au lancement d'une partie à deux.
+    player::spawn_player(&mut commands, &mut draw, Vec2::ZERO, start, 0);
+}
+
+/// Au lancement d'une partie à deux, ajoute le second viking et écarte les deux sur le bouclier.
+fn spawn_missing_players(
+    mut commands: Commands,
+    mode: Res<GameMode>,
+    shapes: Res<Shapes>,
+    mut palette: ResMut<Palette>,
+    mut mats: ResMut<Assets<ColorMaterial>>,
+    mut players: Query<(&Player, &mut Transform)>,
+) {
+    let mut draw = Draw {
+        shapes: &shapes,
+        palette: &mut palette,
+        mats: &mut mats,
+    };
+    let mut existing = 0;
+    let mut start = 0;
+    for (p, mut tf) in &mut players {
+        existing += 1;
+        start = p.on;
+        let offset = player::stand_offset(p.id, mode.players);
+        tf.translation.x = offset.x;
+    }
+    for id in existing..mode.players {
+        let pos = player::stand_offset(id, mode.players);
+        player::spawn_player(&mut commands, &mut draw, pos, start, id);
+    }
 }
 
 fn extend_track(
@@ -340,23 +367,34 @@ fn extend_track(
     mut palette: ResMut<Palette>,
     mut mats: ResMut<Assets<ColorMaterial>>,
     game_font: Res<GameFont>,
-    cam: Single<(&Transform, &Projection), With<MainCamera>>,
+    cams: Query<(&Transform, &Projection, &Camera), With<PlayerCam>>,
 ) {
-    let (cam_tf, projection) = *cam;
-    let cam_y = cam_tf.translation.y;
-    // Moitié de la hauteur visible : bien plus grande en portrait sur téléphone.
-    let half_h = match projection {
-        Projection::Orthographic(o) => o.area.height() / 2.0,
-        _ => crate::VIEW_H / 2.0,
+    // Zone à couvrir : du bas de la caméra la plus basse au haut de la plus haute
+    // (la hauteur visible est bien plus grande en portrait sur téléphone).
+    let mut top = f32::MIN;
+    let mut bottom = f32::MAX;
+    for (tf, projection, camera) in &cams {
+        if !camera.is_active {
+            continue;
+        }
+        let half_h = match projection {
+            Projection::Orthographic(o) => o.area.height() / 2.0,
+            _ => crate::VIEW_H / 2.0,
+        }
+        .max(crate::VIEW_H / 2.0);
+        top = top.max(tf.translation.y + half_h);
+        bottom = bottom.min(tf.translation.y - half_h);
     }
-    .max(crate::VIEW_H / 2.0);
+    if top == f32::MIN {
+        return;
+    }
     let mut draw = Draw {
         shapes: &shapes,
         palette: &mut palette,
         mats: &mut mats,
     };
     let mut rng = rand::rng();
-    while track.next > 0 && track.last.y < cam_y + half_h + 700.0 {
+    while track.next > 0 && track.last.y < top + 700.0 {
         let n = track.next;
         let gap = 215.0 + (n.min(30) as f32) * 1.5;
         let lo = (track.last.x - 220.0).max(-230.0);
@@ -368,7 +406,7 @@ fn extend_track(
     // Nettoyage des plateformes passées.
     let mut i = 0;
     while i < track.platforms.len() {
-        if track.platforms[i].pos.y < cam_y - half_h - 400.0 {
+        if track.platforms[i].pos.y < bottom - 400.0 {
             let e = track.platforms.remove(i).entity;
             commands.entity(e).despawn();
         } else {
@@ -664,10 +702,12 @@ fn bonus_visual(q: &mut ChildSpawnerCommands, d: &mut Draw, kind: BonusKind) {
 
 // ---------- animation ----------
 
-fn orbit_enemies(time: Res<Time>, powers: Res<Powers>, mut q: Query<(&mut Orbiter, &mut Transform)>) {
+fn orbit_enemies(time: Res<Time>, players: Query<&Player>, mut q: Query<(&mut Orbiter, &mut Transform)>) {
     let dt = time.delta_secs();
     let t = time.elapsed_secs();
-    let scale = if powers.mead > 0.0 { 0.4 } else { 1.0 };
+    // L'hydromel d'un joueur ralentit les créatures pour tout le monde.
+    let mead = players.iter().any(|p| p.alive() && p.powers.mead > 0.0);
+    let scale = if mead { 0.4 } else { 1.0 };
     for (mut o, mut tf) in &mut q {
         let speed = o.speed * (1.0 + o.wobble * (t * 1.7 + o.phase).sin());
         o.angle += speed * dt * scale;

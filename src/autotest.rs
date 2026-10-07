@@ -1,7 +1,7 @@
 //! Mode de test automatique (variable d'environnement `VIKING_AUTOTEST=<dossier>`) :
 //! joue tout seul et enregistre des captures d'écran, pour vérifier le rendu.
 
-use crate::{AutoJump, GameState};
+use crate::{AutoJump, GameMode, GameState};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use std::path::PathBuf;
@@ -39,15 +39,20 @@ fn drive(
     state: Res<State<GameState>>,
     mut next: ResMut<NextState<GameState>>,
     mut jump: ResMut<AutoJump>,
+    mut mode: ResMut<GameMode>,
     mut exit: MessageWriter<AppExit>,
 ) {
     let t = time.elapsed_secs();
     if t > 1.5 && !at.started && *state.get() == GameState::Menu && std::env::var_os("VIKING_AUTOTEST_NOPLAY").is_none() {
         at.started = true;
+        // `VIKING_AUTOTEST_PLAYERS=2` teste l'écran partagé.
+        if std::env::var("VIKING_AUTOTEST_PLAYERS").ok().as_deref() == Some("2") {
+            mode.players = 2;
+        }
         next.set(GameState::Playing);
     }
     if t > at.next_jump && *state.get() == GameState::Playing {
-        jump.0 = true;
+        jump.0 = [true; crate::MAX_PLAYERS];
         at.next_jump = t + 1.1;
     }
     if t > at.next_shot {

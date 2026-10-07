@@ -38,10 +38,25 @@ est conservé dans le `localStorage` du navigateur.
 
 ## Jouer
 
-- **Clic gauche / Espace / Entrée / Flèche haut** : bondir vers le bouclier suivant.
+- **Clic gauche / Espace / Entrée / Flèche haut / n'importe quel bouton de manette** : bondir vers le bouclier suivant.
 - Les créatures orbitent autour des boucliers : il faut traverser l'anneau quand la voie est libre.
 - **Niveau** = nombre de boucliers franchis. Le record est sauvegardé dans `~/.viking_dash_best`.
 - **Berserk** : enchaîne les sauts en moins de 0,7 s pour monter un combo et gagner de l'or.
+
+### À deux (écran partagé)
+
+Choisis **2 JOUEURS** dans le menu (clic, touche 2 ou bouton Y d'une manette). L'écran se partage
+en deux : côte à côte en paysage, l'un au-dessus de l'autre en portrait. Les deux vikings courent
+sur la même piste de boucliers ; le premier arrivé sur un bonus le prend, et l'hydromel ralentit
+les créatures pour tout le monde. Quand les deux sont tombés, le niveau le plus haut l'emporte.
+
+| | Joueur 1 (cape rouge) | Joueur 2 (cape bleue) |
+|---|---|---|
+| Clavier | Espace, flèche haut, W/Z | Entrée, Maj droite |
+| Manette | première manette connectée | seconde manette |
+| Souris / tactile | moitié gauche (haute en portrait) | moitié droite (basse en portrait) |
+
+Échap abandonne la partie et revient au menu.
 
 ### Bonus (posés au centre de certains boucliers)
 
@@ -75,7 +90,8 @@ des créatures devient irrégulière.
 |---|---|
 | `src/main.rs` | États, ressources, caméra, sauvegarde du record |
 | `src/world.rs` | Boucliers, créatures, bonus, génération et difficulté |
-| `src/player.rs` | Saut, collisions, pouvoirs, mort, caméra |
+| `src/input.rs` | Clavier, souris, tactile, manettes : attribution aux joueurs |
+| `src/player.rs` | Sauts, collisions, pouvoirs, mort, caméras (une par joueur) |
 | `src/fx.rs` | Aurore boréale, neige, fjord, drakkar, particules, Ragnarök |
 | `src/ui.rs` | Menu, HUD, écran de fin |
 | `src/audio.rs` | Synthèse des sons et encodage WAV |

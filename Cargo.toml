@@ -1,6 +1,6 @@
 [package]
 name = "viking-dash"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 
 [dependencies]
@@ -15,6 +15,7 @@ bevy = { version = "0.19", default-features = false, features = [
     "bevy_sprite", "bevy_sprite_render", "bevy_text",
     "bevy_ui", "bevy_ui_render", "bevy_input_focus",
     "bevy_audio", "wav",
+    "bevy_gilrs",
 ] }
 rand = "0.9"
 
