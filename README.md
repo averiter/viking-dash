@@ -29,6 +29,9 @@ cargo install wasm-bindgen-cli --version 0.2.129
 brew install binaryen   # wasm-opt, facultatif : réduit le .wasm d'environ un quart
 ```
 
+Le `.wasm` pèse environ 20 Mo (5,7 Mo une fois compressé en gzip par l'hébergeur) grâce à une
+sélection minimale des fonctionnalités Bevy dans `Cargo.toml` (2D, interface, texte, audio).
+
 Le jeu s'adapte à l'écran : en portrait sur téléphone on voit plus loin devant soi, en paysage
 sur PC plus large ; les textes suivent la plus petite dimension de l'écran. Sur le web, le record
 est conservé dans le `localStorage` du navigateur.

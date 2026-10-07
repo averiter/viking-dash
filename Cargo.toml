@@ -1,18 +1,30 @@
 [package]
 name = "viking-dash"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 
 [dependencies]
-bevy = { version = "0.19", features = ["wav"] }
+# Fonctionnalités Bevy minimales (2D, interface, texte, audio) : pas de 3D, de glTF,
+# d'animation, de scènes ni de picking. Divise par deux le poids de la version web.
+bevy = { version = "0.19", default-features = false, features = [
+    "std", "async_executor", "multi_threaded",
+    "bevy_asset", "bevy_log", "bevy_state",
+    "bevy_winit", "bevy_window", "default_font",
+    "bevy_color", "bevy_camera", "bevy_image", "bevy_mesh", "bevy_shader",
+    "bevy_render", "bevy_core_pipeline",
+    "bevy_sprite", "bevy_sprite_render", "bevy_text",
+    "bevy_ui", "bevy_ui_render", "bevy_input_focus",
+    "bevy_audio", "wav",
+] }
 rand = "0.9"
 
-# Sur ordinateur : polices système (Luminari sur macOS).
+# Sur ordinateur : polices système (Luminari sur macOS), captures PNG du mode test, Linux.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-bevy = { version = "0.19", features = ["system_font_discovery"] }
+bevy = { version = "0.19", default-features = false, features = ["system_font_discovery", "png", "x11", "wayland"] }
 
-# Sur le web : aléatoire via JavaScript, record dans localStorage.
+# Sur le web : WebGL2, aléatoire via JavaScript, record dans localStorage.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+bevy = { version = "0.19", default-features = false, features = ["webgl2", "web"] }
 getrandom3 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 getrandom = { version = "0.4", features = ["wasm_js"] }
 web-sys = { version = "0.3", features = ["Window", "Storage"] }
