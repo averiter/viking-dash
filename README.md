@@ -32,6 +32,13 @@ brew install binaryen   # wasm-opt, facultatif : réduit le .wasm d'environ un q
 Le `.wasm` pèse environ 20 Mo (5,7 Mo une fois compressé en gzip par l'hébergeur) grâce à une
 sélection minimale des fonctionnalités Bevy dans `Cargo.toml` (2D, interface, texte, audio).
 
+### Déploiement sur GitHub Pages
+
+Le workflow [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) compile la version web
+à chaque push sur `master` (Rust stable, `wasm-bindgen` 0.2.129 et `wasm-opt` téléchargés depuis
+leurs releases) et publie le dossier `web/` sur <https://averiter.github.io/viking-dash/>.
+Le cache cargo rend les builds suivants nettement plus rapides que le premier (~15 min).
+
 Le jeu s'adapte à l'écran : en portrait sur téléphone on voit plus loin devant soi, en paysage
 sur PC plus large ; les textes suivent la plus petite dimension de l'écran. Sur le web, le record
 est conservé dans le `localStorage` du navigateur.
@@ -97,3 +104,4 @@ des créatures devient irrégulière.
 | `src/audio.rs` | Synthèse des sons et encodage WAV |
 | `src/autotest.rs` | Mode de test automatique (hors web) |
 | `web/index.html`, `build-web.sh` | Page et script de build pour le navigateur |
+| `.github/workflows/deploy.yml` | Build web et publication sur GitHub Pages |

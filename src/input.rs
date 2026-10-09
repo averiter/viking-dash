@@ -16,6 +16,8 @@ pub struct Inputs {
     pub jump: [bool; MAX_PLAYERS],
     /// N'importe quelle action (écrans de menu).
     pub any: bool,
+    /// Clics et contacts tactiles de la frame, en pixels logiques de la fenêtre.
+    pub taps: Vec<Vec2>,
     /// Choix du mode dans le menu.
     pub choose_solo: bool,
     pub choose_duo: bool,
@@ -86,6 +88,8 @@ fn read_inputs(
     } else {
         inputs.jump[0] = inputs.any;
     }
+
+    inputs.taps = taps;
 
     inputs.choose_solo = keys.any_just_pressed([
         KeyCode::Space,

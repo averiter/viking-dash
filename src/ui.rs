@@ -7,7 +7,7 @@ use crate::{split_horizontal, AutoStart, GameFont, GameMode, GameState, PlayerCa
 use bevy::color::Alpha;
 use bevy::prelude::*;
 use bevy::text::FontSize;
-use bevy::ui::UiTargetCamera;
+use bevy::ui::{UiGlobalTransform, UiTargetCamera};
 use bevy::window::PrimaryWindow;
 
 /// `size` est exprimée pour une vue de 720 de haut ; elle suit la plus petite
@@ -67,7 +67,7 @@ impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<GameOverDelay>()
             .add_systems(OnEnter(GameState::Menu), spawn_menu)
-            .add_systems(Update, (menu_input, menu_buttons).run_if(in_state(GameState::Menu)))
+            .add_systems(Update, (menu_input, menu_buttons, menu_taps).run_if(in_state(GameState::Menu)))
             .add_systems(OnEnter(GameState::Playing), (spawn_hud, start_horn))
             .add_systems(Update, (update_hud, escape_to_menu).run_if(in_state(GameState::Playing)))
             .add_systems(OnEnter(GameState::GameOver), (despawn_hud, spawn_game_over))
@@ -218,6 +218,28 @@ fn menu_buttons(
             Interaction::Pressed => start_game(button.0, &mut mode, &mut next),
             Interaction::Hovered => bg.0 = Color::srgba(0.2, 0.25, 0.45, 0.85),
             Interaction::None => bg.0 = Color::srgba(0.05, 0.08, 0.2, 0.75),
+        }
+    }
+}
+
+/// Tactile : un doigt posé sur un bouton du menu le déclenche, même si le contact
+/// commence et finit dans la même frame (fréquent sur un téléphone lent), cas où
+/// l'`Interaction` de Bevy ne voit plus la position du doigt.
+fn menu_taps(
+    inputs: Res<Inputs>,
+    window: Single<&Window, With<PrimaryWindow>>,
+    buttons: Query<(&ComputedNode, &UiGlobalTransform, &ModeButton)>,
+    mut mode: ResMut<GameMode>,
+    mut next: ResMut<NextState<GameState>>,
+) {
+    if inputs.taps.is_empty() {
+        return;
+    }
+    let scale = window.scale_factor();
+    for (node, transform, button) in &buttons {
+        if inputs.taps.iter().any(|tap| node.contains_point(*transform, *tap * scale)) {
+            start_game(button.0, &mut mode, &mut next);
+            return;
         }
     }
 }

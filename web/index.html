@@ -11,7 +11,7 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%23b32d22' stroke='%236c6f78' stroke-width='6'/%3E%3Crect x='29' y='6' width='6' height='52' fill='%23231a10'/%3E%3Crect x='6' y='29' width='52' height='6' fill='%23231a10'/%3E%3Ccircle cx='32' cy='32' r='8' fill='%236c6f78'/%3E%3C/svg%3E">
   <style>
     html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #080f24; }
-    body { position: fixed; inset: 0; touch-action: none; -webkit-user-select: none; user-select: none; }
+    body { position: fixed; inset: 0; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
     #viking { display: block; width: 100%; height: 100%; outline: none; touch-action: none; }
     #loading {
       position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -47,7 +47,8 @@
         if (done) break;
         chunks.push(value);
         received += value.length;
-        fill.style.width = Math.round(100 * received / total) + '%';
+        // Sur GitHub Pages le .wasm arrive compressé : Content-Length est la taille gzip, on plafonne.
+        fill.style.width = Math.min(100, Math.round(100 * received / total)) + '%';
       }
       return new Response(new Blob(chunks), { headers: { 'Content-Type': 'application/wasm' } });
     }
