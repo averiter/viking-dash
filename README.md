@@ -82,10 +82,14 @@ des créatures devient irrégulière.
 
 ## Technique
 
+- Ciel à petit budget : l'aurore est un seul maillage à couleurs de sommets (redessiné à chaque
+  frame), le dégradé du ciel et la vignette sont deux quadrilatères, et tous les halos partagent une
+  texture de 64 × 64 créée en mémoire. Pas de post-traitement.
 - Aucun asset externe : tout est dessiné avec des primitives (`Mesh2d`) et les sons
   (cors, tambours, chocs, tonnerre) sont synthétisés en mémoire au démarrage (`src/audio.rs`).
-- Police : *Luminari* (système) sur macOS, sinon Fira Sans Bold embarquée (`assets/fonts`, licence OFL),
-  notamment sur le web.
+- Polices : titres et chiffres en *Luminari* (système) sur macOS, sinon en Fira Sans Bold embarquée
+  (`assets/fonts`, licence OFL), notamment sur le web ; les textes courants (consignes, aides) sont
+  toujours en Fira Sans, plus lisible en petit.
 - `VIKING_WINDOW=390x844 cargo run` ouvre une fenêtre au format téléphone portrait.
 - `VIKING_START=30 cargo run` démarre directement au niveau 30.
 - `VIKING_AUTOTEST=<dossier> cargo run` joue tout seul et enregistre des captures d'écran
@@ -99,7 +103,7 @@ des créatures devient irrégulière.
 | `src/world.rs` | Boucliers, créatures, bonus, génération et difficulté |
 | `src/input.rs` | Clavier, souris, tactile, manettes : attribution aux joueurs |
 | `src/player.rs` | Sauts, collisions, pouvoirs, mort, caméras (une par joueur) |
-| `src/fx.rs` | Aurore boréale, neige, fjord, drakkar, particules, Ragnarök |
+| `src/fx.rs` | Ciel dégradé, lune, aurore boréale, neige, fjord, drakkar, particules, vignette, Ragnarök |
 | `src/ui.rs` | Menu, HUD, écran de fin |
 | `src/audio.rs` | Synthèse des sons et encodage WAV |
 | `src/autotest.rs` | Mode de test automatique (hors web) |

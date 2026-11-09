@@ -83,9 +83,13 @@ pub struct PlayerCam(pub u8);
 #[derive(Component, Default)]
 pub struct CamShake(pub f32);
 
-/// Police du jeu : Luminari (système) sur macOS, Fira Sans embarquée ailleurs et sur le web.
+/// Polices du jeu. Titres et chiffres : Luminari (système) sur macOS, Fira Sans ailleurs
+/// et sur le web. Textes courants : toujours Fira Sans embarquée, plus lisible en petit.
 #[derive(Resource)]
-pub struct GameFont(pub FontSource);
+pub struct GameFont {
+    pub display: FontSource,
+    pub body: FontSource,
+}
 
 /// Taille de référence : la vue fait toujours au moins 720 unités de haut.
 pub const VIEW_H: f32 = 720.0;
@@ -179,6 +183,12 @@ fn setup_cameras(mut commands: Commands) {
     }
 }
 
+/// Hauteur de la caméra dans le menu : le premier bouclier reste dans le tiers
+/// inférieur de l'écran, sous les textes, et le fjord reste visible en bas.
+pub fn menu_cam_y(visible_h: f32) -> f32 {
+    visible_h / 6.0
+}
+
 /// Écran partagé : côte à côte en paysage, l'un au-dessus de l'autre en portrait.
 pub fn split_horizontal(size: Vec2) -> bool {
     size.x >= size.y
@@ -233,12 +243,13 @@ fn layout_cameras(
 }
 
 fn load_font(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let source = if cfg!(target_os = "macos") {
+    let body = FontSource::Handle(asset_server.load("fonts/FiraSans-Bold.ttf"));
+    let display = if cfg!(target_os = "macos") {
         FontSource::from("Luminari")
     } else {
-        FontSource::Handle(asset_server.load("fonts/FiraSans-Bold.ttf"))
+        body.clone()
     };
-    commands.insert_resource(GameFont(source));
+    commands.insert_resource(GameFont { display, body });
 }
 
 fn enter_menu(mut next: ResMut<NextState<GameState>>) {

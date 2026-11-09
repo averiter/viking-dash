@@ -1,10 +1,12 @@
-//! Ambiance : aurore boréale, étoiles, neige, fjord, drakkar, particules,
-//! secousses de caméra et éclairs du Ragnarök.
+//! Ambiance : ciel dégradé, lune, aurore boréale, étoiles, neige, fjord, drakkar,
+//! particules, vignette et lueur du Ragnarök.
 
 use crate::world::{Draw, Palette, Shapes};
 use crate::{ui, GameEntity, GameFont, PlayerCam, MAX_PLAYERS};
-use bevy::camera::visibility::RenderLayers;
+use bevy::asset::RenderAssetUsages;
+use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::color::{Alpha, Luminance};
+use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy::sprite_render::AlphaMode2d;
 use rand::RngExt;
@@ -14,9 +16,23 @@ use std::f32::consts::PI;
 #[derive(Component)]
 struct SkyOf(u8);
 
-/// Secondes restantes d'éclairs rouges.
+/// Secondes restantes de lueur rouge.
 #[derive(Resource, Default)]
 pub struct Ragnarok(pub f32);
+
+pub const RAGNAROK_DURATION: f32 = 2.6;
+
+impl Ragnarok {
+    /// Intensité de la lueur (0 à 1) : monte en douceur, puis s'éteint lentement. Pas de clignotement.
+    fn glow(&self) -> f32 {
+        if self.0 <= 0.0 {
+            return 0.0;
+        }
+        let rise = ((RAGNAROK_DURATION - self.0) / 0.4).clamp(0.0, 1.0);
+        let fall = (self.0 / RAGNAROK_DURATION).clamp(0.0, 1.0);
+        rise * rise * (3.0 - 2.0 * rise) * fall
+    }
+}
 
 #[derive(Component)]
 pub struct Particle {
@@ -53,8 +69,20 @@ struct Snow {
     phase: f32,
 }
 
+/// Décor plein écran qui suit la caméra de son joueur.
 #[derive(Component)]
-struct AuroraBand(usize);
+enum Backdrop {
+    /// Dégradé du ciel, derrière tout le reste.
+    Gradient,
+    Aurora,
+    Moon,
+    /// Coins assombris, par-dessus le monde.
+    Vignette,
+}
+
+/// Maillage du rideau d'aurore, redessiné à chaque frame (partagé par les caméras).
+#[derive(Resource)]
+struct AuroraMesh(Handle<Mesh>);
 
 #[derive(Component)]
 struct Flash;
@@ -83,6 +111,8 @@ impl Plugin for FxPlugin {
                     particles,
                     float_texts,
                     sky_follow,
+                    backdrop_follow,
+                    aurora_wave,
                     sky_tint,
                     ragnarok_tick,
                     waves_and_ship,
@@ -91,13 +121,142 @@ impl Plugin for FxPlugin {
     }
 }
 
+/// Couleur d'un sommet (les couleurs de sommets sont en RVB linéaire).
+fn vcol(c: Color) -> [f32; 4] {
+    c.to_linear().to_f32_array()
+}
+
+/// Indices d'une grille de `cols` × `rows` cases dont les sommets sont rangés ligne par ligne.
+fn grid_indices(cols: usize, rows: usize, offset: usize, out: &mut Vec<u16>) {
+    let w = cols + 1;
+    for j in 0..rows {
+        for i in 0..cols {
+            let a = (offset + j * w + i) as u16;
+            let (b, c, d) = (a + 1, a + w as u16, a + w as u16 + 1);
+            out.extend_from_slice(&[a, b, d, a, d, c]);
+        }
+    }
+}
+
+/// Carré unité centré, découpé en grille, coloré sommet par sommet : un dégradé sans texture.
+fn gradient_mesh(cols: usize, rows: usize, color: impl Fn(Vec2) -> Color) -> Mesh {
+    let mut positions = Vec::new();
+    let mut colors = Vec::new();
+    for j in 0..=rows {
+        for i in 0..=cols {
+            let p = Vec2::new(i as f32 / cols as f32 - 0.5, j as f32 / rows as f32 - 0.5);
+            positions.push([p.x, p.y, 0.0]);
+            colors.push(vcol(color(p)));
+        }
+    }
+    let mut indices = Vec::new();
+    grid_indices(cols, rows, 0, &mut indices);
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
+        .with_inserted_indices(Indices::U16(indices))
+}
+
+const AURORA_COLS: usize = 64;
+const AURORA_RIBBONS: usize = 2;
+const AURORA_HALF_W: f32 = 820.0;
+
+/// Sommets du rideau d'aurore à l'instant `t` : deux rubans ondulants, chacun en quatre
+/// rangées (bord inférieur éteint, liseré vif, corps, sommet éteint).
+fn aurora_vertices(t: f32) -> (Vec<[f32; 3]>, Vec<[f32; 4]>) {
+    let n = AURORA_RIBBONS * 4 * (AURORA_COLS + 1);
+    let mut positions = vec![[0.0; 3]; n];
+    let mut colors = vec![[0.0; 4]; n];
+    for r in 0..AURORA_RIBBONS {
+        let rf = r as f32;
+        // Le ruban du fond (r = 0) est plus haut, plus pâle et plus lent.
+        let strength = if r == 0 { 0.32 } else { 0.55 };
+        let speed = if r == 0 { 0.7 } else { 1.0 };
+        let ts = t * speed;
+        for i in 0..=AURORA_COLS {
+            let p = i as f32 * 0.21 + rf * 2.3;
+            let x = -AURORA_HALF_W + i as f32 * (2.0 * AURORA_HALF_W / AURORA_COLS as f32) + 14.0 * (ts * 0.3 + p).sin();
+            let base = 44.0 * (ts * 0.25 + p * 0.9).sin() + 24.0 * (ts * 0.4 + p * 2.3).sin() + 70.0 - rf * 95.0;
+            let height = 190.0 + 70.0 * (ts * 0.5 + p * 1.4).sin() + 40.0 * (ts * 1.1 + p * 3.7).sin();
+            // Rayons verticaux : l'intensité varie d'une colonne à l'autre et glisse lentement.
+            let rays = 0.62 + 0.38 * (i as f32 * 1.9 + ts * 0.9 + rf * 4.0).sin() * (i as f32 * 0.6 - ts * 0.5).sin();
+            let a = strength * rays;
+            let hue = 0.5 + 0.5 * (p * 0.8 + ts * 0.12).sin();
+            let low = Vec3::new(0.25, 1.0, 0.55).lerp(Vec3::new(0.25, 0.85, 1.0), hue);
+            let high = Vec3::new(0.65, 0.42, 1.0);
+            let mid = low.lerp(high, 0.55);
+            let rows = [
+                (base - 60.0, low, 0.0),
+                (base, low, a),
+                (base + height * 0.42, mid, a * 0.5),
+                (base + height, high, 0.0),
+            ];
+            for (j, (y, c, alpha)) in rows.into_iter().enumerate() {
+                let v = (r * 4 + j) * (AURORA_COLS + 1) + i;
+                positions[v] = [x, y, 0.0];
+                colors[v] = vcol(Color::srgba(c.x, c.y, c.z, alpha));
+            }
+        }
+    }
+    (positions, colors)
+}
+
+fn aurora_mesh() -> Mesh {
+    let (positions, colors) = aurora_vertices(0.0);
+    let mut indices = Vec::new();
+    for r in 0..AURORA_RIBBONS {
+        grid_indices(AURORA_COLS, 3, r * 4 * (AURORA_COLS + 1), &mut indices);
+    }
+    // Conservé côté jeu (usages par défaut) : ses sommets sont réécrits à chaque frame.
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
+        .with_inserted_indices(Indices::U16(indices))
+}
+
+fn aurora_wave(time: Res<Time>, aurora: Res<AuroraMesh>, mut meshes: ResMut<Assets<Mesh>>) {
+    if let Some(mut mesh) = meshes.get_mut(&aurora.0) {
+        let (positions, colors) = aurora_vertices(time.elapsed_secs());
+        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    }
+}
+
 fn setup_sky(
     mut commands: Commands,
     shapes: Res<Shapes>,
     mut palette: ResMut<Palette>,
     mut mats: ResMut<Assets<ColorMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
 ) {
     let mut rng = rand::rng();
+
+    // Matériau blanc translucide : la couleur vient des sommets.
+    let vertex_mat = mats.add(ColorMaterial {
+        color: Color::WHITE,
+        alpha_mode: AlphaMode2d::Blend,
+        ..default()
+    });
+    // Ciel : sombre en haut, lueur froide vers l'horizon ; translucide, pour laisser
+    // passer la teinte du fond qui change avec le niveau et le Ragnarök.
+    let gradient = meshes.add(gradient_mesh(1, 8, |p| {
+        let v = p.y + 0.5;
+        let glow = (1.0 - v / 0.5).clamp(0.0, 1.0);
+        let dark = ((v - 0.5) / 0.5).clamp(0.0, 1.0);
+        if glow > 0.0 {
+            Color::srgba(0.16, 0.42, 0.62, 0.36 * glow * glow)
+        } else {
+            Color::srgba(0.0, 0.0, 0.05, 0.5 * dark)
+        }
+    }));
+    // Vignette : transparente au centre, sombre dans les coins.
+    let vignette = meshes.add(gradient_mesh(12, 12, |p| {
+        let d = (p * 2.0).length();
+        let k = ((d - 0.62) / 0.8).clamp(0.0, 1.0);
+        Color::srgba(0.0, 0.0, 0.04, 0.5 * k * k * (3.0 - 2.0 * k))
+    }));
+    let aurora = meshes.add(aurora_mesh());
+    commands.insert_resource(AuroraMesh(aurora.clone()));
     let mut d = Draw {
         shapes: &shapes,
         palette: &mut palette,
@@ -119,21 +278,55 @@ fn setup_sky(
             ));
         }
 
-        // Aurore boréale : rideau de bandes translucides.
-        let tints = [
-            Color::srgba(0.30, 1.00, 0.60, 0.15),
-            Color::srgba(0.30, 0.85, 1.00, 0.13),
-            Color::srgba(0.70, 0.45, 1.00, 0.11),
-        ];
-        for i in 0..48 {
-            let x = -730.0 + i as f32 * 31.0;
-            commands.spawn((
-                d.rect(tints[i % 3], Vec2::new(x, 300.0), -8.0, Vec2::new(30.0, 150.0), 0.0),
-                AuroraBand(i),
+        // Dégradé du ciel et vignette : un quadrilatère chacun.
+        commands.spawn((
+            Mesh2d(gradient.clone()),
+            MeshMaterial2d(vertex_mat.clone()),
+            Transform::from_xyz(0.0, 0.0, -10.0),
+            Backdrop::Gradient,
+            SkyOf(id),
+            NoFrustumCulling,
+            layer.clone(),
+        ));
+        commands.spawn((
+            Mesh2d(vignette.clone()),
+            MeshMaterial2d(vertex_mat.clone()),
+            Transform::from_xyz(0.0, 0.0, 35.0),
+            Backdrop::Vignette,
+            SkyOf(id),
+            NoFrustumCulling,
+            layer.clone(),
+        ));
+
+        // Aurore boréale : un seul rideau à bords fondus (au lieu de 48 bandes).
+        commands.spawn((
+            Mesh2d(aurora.clone()),
+            MeshMaterial2d(vertex_mat.clone()),
+            Transform::from_xyz(0.0, 300.0, -8.0),
+            Backdrop::Aurora,
+            SkyOf(id),
+            NoFrustumCulling,
+            layer.clone(),
+        ));
+
+        // Lune, derrière l'aurore. Les couches de rendu ne s'héritent pas : chaque morceau porte la sienne.
+        let moon = Color::srgb(0.92, 0.94, 1.0);
+        let crater = Color::srgb(0.80, 0.83, 0.94);
+        commands
+            .spawn((
+                Backdrop::Moon,
                 SkyOf(id),
+                Transform::from_xyz(210.0, 300.0, -8.5),
+                Visibility::default(),
                 layer.clone(),
-            ));
-        }
+            ))
+            .with_children(|p| {
+                p.spawn((d.glow(Color::srgba(0.7, 0.82, 1.0, 0.5), Vec2::ZERO, -0.1, 130.0), layer.clone()));
+                p.spawn((d.circle(moon, Vec2::ZERO, 0.0, 30.0), layer.clone()));
+                for (x, y, r) in [(-9.0, 8.0, 7.0), (10.0, -4.0, 5.0), (-3.0, -13.0, 4.0), (13.0, 13.0, 3.0)] {
+                    p.spawn((d.circle(crater, Vec2::new(x, y), 0.05, r), layer.clone()));
+                }
+            });
 
         // Neige.
         for _ in 0..90 {
@@ -290,11 +483,10 @@ fn float_texts(mut commands: Commands, time: Res<Time>, mut q: Query<(Entity, &m
 
 fn sky_follow(
     time: Res<Time>,
-    cams: Query<(&PlayerCam, &Transform, &Projection), (Without<Star>, Without<Snow>, Without<AuroraBand>, Without<Flash>)>,
-    mut stars: Query<(&Star, &SkyOf, &mut Transform), (Without<Snow>, Without<AuroraBand>, Without<Flash>)>,
-    mut snow: Query<(&Snow, &SkyOf, &mut Transform), (Without<Star>, Without<AuroraBand>, Without<Flash>)>,
-    mut aurora: Query<(&AuroraBand, &SkyOf, &mut Transform), (Without<Star>, Without<Snow>, Without<Flash>)>,
-    mut flash: Query<(&SkyOf, &mut Transform), (With<Flash>, Without<Star>, Without<Snow>, Without<AuroraBand>)>,
+    cams: Query<(&PlayerCam, &Transform, &Projection), (Without<Star>, Without<Snow>, Without<Flash>)>,
+    mut stars: Query<(&Star, &SkyOf, &mut Transform), (Without<Snow>, Without<Flash>)>,
+    mut snow: Query<(&Snow, &SkyOf, &mut Transform), (Without<Star>, Without<Flash>)>,
+    mut flash: Query<(&SkyOf, &mut Transform), (With<Flash>, Without<Star>, Without<Snow>)>,
 ) {
     let t = time.elapsed_secs();
     let dt = time.delta_secs();
@@ -335,15 +527,6 @@ fn sky_follow(
                 tf.translation.y = cy - visible_h * 0.54;
             }
         }
-        for (b, sky, mut tf) in &mut aurora {
-            if sky.0 != id {
-                continue;
-            }
-            let i = b.0 as f32;
-            let h = 150.0 + 80.0 * (t * 0.6 + i * 0.35).sin() + 40.0 * (t * 1.3 + i * 0.9).sin();
-            tf.scale = Vec3::new(30.0, h, 1.0);
-            tf.translation.y = cy + visible_h * 0.32 + 30.0 * (t * 0.25 + i * 0.3).sin();
-        }
         for (sky, mut tf) in &mut flash {
             if sky.0 != id {
                 continue;
@@ -354,15 +537,42 @@ fn sky_follow(
     }
 }
 
+/// Cale le dégradé, la vignette, l'aurore et la lune sur la vue de chaque caméra.
+fn backdrop_follow(
+    cams: Query<(&PlayerCam, &Transform, &Projection), Without<Backdrop>>,
+    mut backdrops: Query<(&Backdrop, &SkyOf, &mut Transform)>,
+) {
+    for (cam, cam_tf, projection) in &cams {
+        let (cx, cy) = (cam_tf.translation.x, cam_tf.translation.y);
+        let view = match projection {
+            Projection::Orthographic(o) => o.area.size().max(Vec2::new(crate::VIEW_W_MIN, crate::VIEW_H)),
+            _ => Vec2::new(crate::VIEW_W_MIN, crate::VIEW_H),
+        };
+        for (backdrop, sky, mut tf) in &mut backdrops {
+            if sky.0 != cam.0 {
+                continue;
+            }
+            match backdrop {
+                // Un peu plus grands que la vue : les secousses de caméra n'en montrent pas le bord.
+                Backdrop::Gradient | Backdrop::Vignette => {
+                    tf.translation.x = cx;
+                    tf.translation.y = cy;
+                    tf.scale = (view * 1.08).extend(1.0);
+                }
+                Backdrop::Aurora => tf.translation.y = cy + view.y * 0.20,
+                Backdrop::Moon => tf.translation.y = cy + view.y * 0.33,
+            }
+        }
+    }
+}
+
 fn sky_tint(players: Query<&crate::player::Player>, ragnarok: Res<Ragnarok>, mut clear: ResMut<ClearColor>) {
     let level = players.iter().map(|p| p.level).max().unwrap_or(0);
     let k = (level as f32 / 45.0).clamp(0.0, 1.0);
     let a = Vec3::new(0.03, 0.06, 0.14);
     let b = Vec3::new(0.10, 0.03, 0.14);
     let mut c = a.lerp(b, k);
-    if ragnarok.0 > 0.0 {
-        c = c.lerp(Vec3::new(0.25, 0.03, 0.02), (ragnarok.0 / 2.6).min(1.0) * 0.6);
-    }
+    c = c.lerp(Vec3::new(0.22, 0.03, 0.02), ragnarok.glow() * 0.32);
     clear.0 = Color::srgb(c.x, c.y, c.z);
 }
 
@@ -371,12 +581,8 @@ fn ragnarok_tick(time: Res<Time>, mut r: ResMut<Ragnarok>, flash: Res<FlashMat>,
         return;
     }
     r.0 -= time.delta_secs();
-    let alpha = if r.0 > 0.0 {
-        let k = r.0 / 2.6;
-        0.4 * k * (r.0 * 9.0).sin().abs()
-    } else {
-        0.0
-    };
+    // Voile rouge léger et continu : plus de flashs répétés.
+    let alpha = 0.07 * r.glow();
     if let Some(mut m) = mats.get_mut(&flash.0) {
         m.color.set_alpha(alpha);
     }

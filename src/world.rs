@@ -2,10 +2,11 @@
 //! procédurale et difficulté progressive.
 
 use crate::player::{self, Player};
-use crate::{ui, GameEntity, GameFont, GameMode, GameState, PlayerCam, Score};
+use crate::{GameEntity, GameMode, GameState, PlayerCam, Score};
+use bevy::asset::RenderAssetUsages;
 use bevy::color::Luminance;
 use bevy::prelude::*;
-use bevy::sprite::Anchor;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use rand::RngExt;
 use std::collections::HashMap;
 use std::f32::consts::{PI, TAU};
@@ -52,6 +53,8 @@ pub struct Shapes {
     pub ring: Handle<Mesh>,
     pub thin_ring: Handle<Mesh>,
     pub hex: Handle<Mesh>,
+    /// Halo doux : disque blanc dont l'opacité s'éteint vers le bord (texture créée en mémoire).
+    pub glow: Handle<Image>,
 }
 
 /// Cache de matériaux par couleur, pour ne pas créer un asset par forme.
@@ -70,8 +73,29 @@ impl Palette {
     }
 }
 
-fn setup_shapes(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
+/// Texture du halo : 64 × 64, blanche, opacité en cloche du centre vers le bord.
+fn glow_image() -> Image {
+    const N: usize = 64;
+    let mut data = Vec::with_capacity(N * N * 4);
+    for y in 0..N {
+        for x in 0..N {
+            let p = (Vec2::new(x as f32, y as f32) + 0.5) / (N as f32 / 2.0) - 1.0;
+            let k = (1.0 - p.length()).clamp(0.0, 1.0);
+            data.extend_from_slice(&[255, 255, 255, (k * k * 255.0) as u8]);
+        }
+    }
+    Image::new(
+        Extent3d { width: N as u32, height: N as u32, depth_or_array_layers: 1 },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    )
+}
+
+fn setup_shapes(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut images: ResMut<Assets<Image>>) {
     commands.insert_resource(Shapes {
+        glow: images.add(glow_image()),
         circle: meshes.add(Circle::new(1.0)),
         square: meshes.add(Rectangle::new(1.0, 1.0)),
         tri: meshes.add(Triangle2d::new(
@@ -129,6 +153,18 @@ impl Draw<'_> {
     pub fn thin_ring(&mut self, color: Color, pos: Vec2, z: f32, r: f32) -> ShapeBundle {
         let m = self.shapes.thin_ring.clone();
         self.bundle(&m, color, pos, z, Vec2::splat(r), 0.0)
+    }
+    /// Halo lumineux de rayon `r` (un sprite : tous les halos partent dans le même lot).
+    pub fn glow(&self, color: Color, pos: Vec2, z: f32, r: f32) -> (Sprite, Transform) {
+        (
+            Sprite {
+                image: self.shapes.glow.clone(),
+                color,
+                custom_size: Some(Vec2::splat(2.0)),
+                ..default()
+            },
+            Transform::from_translation(pos.extend(z)).with_scale(Vec3::new(r, r, 1.0)),
+        )
     }
     pub fn hex(&mut self, color: Color, pos: Vec2, z: f32, r: f32) -> ShapeBundle {
         let m = self.shapes.hex.clone();
@@ -206,6 +242,8 @@ pub struct TrackEntry {
     pub entity: Entity,
     pub pos: Vec2,
     pub index: u32,
+    /// Nom de la créature si elle apparaît ici pour la première fois (annoncé par le HUD).
+    pub announce: Option<&'static str>,
 }
 
 #[derive(Resource, Default)]
@@ -218,6 +256,9 @@ pub struct Track {
 impl Track {
     pub fn pos(&self, index: u32) -> Option<Vec2> {
         self.platforms.iter().find(|p| p.index == index).map(|p| p.pos)
+    }
+    pub fn announce(&self, index: u32) -> Option<&'static str> {
+        self.platforms.iter().find(|p| p.index == index).and_then(|p| p.announce)
     }
 }
 
@@ -307,7 +348,6 @@ fn reset_world(
     shapes: Res<Shapes>,
     mut palette: ResMut<Palette>,
     mut mats: ResMut<Assets<ColorMaterial>>,
-    game_font: Res<GameFont>,
     mut cams: Query<&mut Transform, With<PlayerCam>>,
 ) {
     for e in &olds {
@@ -326,7 +366,7 @@ fn reset_world(
     };
     // `VIKING_START=n` permet de démarrer directement au niveau n (tests).
     let start = std::env::var("VIKING_START").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
-    spawn_platform(&mut commands, &mut draw, &game_font, &mut track, &mut seen, start, Vec2::ZERO);
+    spawn_platform(&mut commands, &mut draw, &mut track, &mut seen, start, Vec2::ZERO);
     // Le joueur 1 est visible dès le menu ; le joueur 2 arrive au lancement d'une partie à deux.
     player::spawn_player(&mut commands, &mut draw, Vec2::ZERO, start, 0);
 }
@@ -366,7 +406,6 @@ fn extend_track(
     shapes: Res<Shapes>,
     mut palette: ResMut<Palette>,
     mut mats: ResMut<Assets<ColorMaterial>>,
-    game_font: Res<GameFont>,
     cams: Query<(&Transform, &Projection, &Camera), With<PlayerCam>>,
 ) {
     // Zone à couvrir : du bas de la caméra la plus basse au haut de la plus haute
@@ -401,7 +440,7 @@ fn extend_track(
         let hi = (track.last.x + 220.0).min(230.0);
         let x = rng.random_range(lo..hi);
         let pos = Vec2::new(x, track.last.y + gap);
-        spawn_platform(&mut commands, &mut draw, &game_font, &mut track, &mut seen, n, pos);
+        spawn_platform(&mut commands, &mut draw, &mut track, &mut seen, n, pos);
     }
     // Nettoyage des plateformes passées.
     let mut i = 0;
@@ -418,7 +457,6 @@ fn extend_track(
 fn spawn_platform(
     commands: &mut Commands,
     draw: &mut Draw,
-    game_font: &GameFont,
     track: &mut Track,
     seen: &mut Seen,
     index: u32,
@@ -540,24 +578,9 @@ fn spawn_platform(
             ))
             .with_children(|q| bonus_visual(q, draw, kind));
         }
-
-        if let Some(name) = label {
-            let (x, anchor) = if pos.x > 0.0 {
-                (-ORBIT_R - 14.0, Anchor::CENTER_RIGHT)
-            } else {
-                (ORBIT_R + 14.0, Anchor::CENTER_LEFT)
-            };
-            p.spawn((
-                Text2d::new(name),
-                ui::world_font(game_font, 20.0),
-                TextColor(Color::srgba(1.0, 0.92, 0.7, 0.85)),
-                anchor,
-                Transform::from_xyz(x, 0.0, 0.6),
-            ));
-        }
     });
 
-    track.platforms.push(TrackEntry { entity: root, pos, index });
+    track.platforms.push(TrackEntry { entity: root, pos, index, announce: label });
     track.next = index + 1;
     track.last = pos;
 }
@@ -572,7 +595,7 @@ fn enemy_visual(q: &mut ChildSpawnerCommands, d: &mut Draw, kind: EnemyKind, see
             let feather = Color::srgb(0.16, 0.20, 0.34);
             let edge = Color::srgb(0.75, 0.82, 1.0);
             let z = 2.0;
-            q.spawn(d.circle(Color::srgba(0.8, 0.9, 1.0, 0.22), Vec2::ZERO, z - 0.3, 27.0));
+            q.spawn(d.glow(Color::srgba(0.7, 0.85, 1.0, 0.6), Vec2::ZERO, z - 0.3, 46.0));
             q.spawn(d.ellipse(edge, Vec2::ZERO, z - 0.1, 21.0, 14.0, 0.0));
             q.spawn(d.ellipse(feather, Vec2::ZERO, z, 18.5, 11.5, 0.0));
             q.spawn(d.circle(edge, Vec2::new(16.0, 6.0), z + 0.05, 11.0));
@@ -598,7 +621,7 @@ fn enemy_visual(q: &mut ChildSpawnerCommands, d: &mut Draw, kind: EnemyKind, see
         EnemyKind::Draugr => {
             let skin = Color::srgb(0.30, 0.52, 0.30);
             let z = 2.0;
-            q.spawn(d.circle(Color::srgba(0.5, 1.0, 0.5, 0.18), Vec2::ZERO, z - 0.2, 24.0));
+            q.spawn(d.glow(Color::srgba(0.45, 1.0, 0.45, 0.5), Vec2::ZERO, z - 0.2, 42.0));
             q.spawn(d.circle(skin, Vec2::ZERO, z, 16.0));
             q.spawn(d.rect(skin.darker(0.1), Vec2::new(0.0, -10.0), z + 0.1, Vec2::new(18.0, 8.0), 0.0));
             for k in 0..3 {
@@ -608,7 +631,7 @@ fn enemy_visual(q: &mut ChildSpawnerCommands, d: &mut Draw, kind: EnemyKind, see
                 q.spawn(d.circle(Color::srgb(0.05, 0.1, 0.05), Vec2::new(side * 6.0, 3.0), z + 0.1, 4.5));
                 q.spawn((
                     d.circle(Color::srgb(1.0, 0.2, 0.1), Vec2::new(side * 6.0, 3.0), z + 0.2, 2.2),
-                    Wobble { amp: 0.0, freq: 6.0, phase: s, base: 0.0 },
+                    Wobble { amp: 0.0, freq: 3.5, phase: s, base: 0.0 },
                 ));
             }
         }
@@ -629,6 +652,7 @@ fn enemy_visual(q: &mut ChildSpawnerCommands, d: &mut Draw, kind: EnemyKind, see
         EnemyKind::Kraken => {
             let purple = Color::srgb(0.48, 0.18, 0.55);
             let z = 2.0;
+            q.spawn(d.glow(Color::srgba(0.85, 0.5, 1.0, 0.4), Vec2::ZERO, z - 0.2, 40.0));
             for (i, a) in [-0.9_f32, -0.3, 0.3, 0.9].iter().enumerate() {
                 q.spawn((
                     d.rect(purple.darker(0.05), Vec2::from_angle(*a + PI) * 18.0, z - 0.1, Vec2::new(7.0, 26.0), *a + PI / 2.0),
@@ -645,7 +669,7 @@ fn enemy_visual(q: &mut ChildSpawnerCommands, d: &mut Draw, kind: EnemyKind, see
         EnemyKind::Jotunn => {
             let ice = Color::srgb(0.62, 0.82, 0.95);
             let z = 2.0;
-            q.spawn(d.circle(Color::srgba(0.8, 0.95, 1.0, 0.25), Vec2::ZERO, z - 0.2, 24.0));
+            q.spawn(d.glow(Color::srgba(0.75, 0.93, 1.0, 0.6), Vec2::ZERO, z - 0.2, 44.0));
             q.spawn(d.hex(ice, Vec2::ZERO, z, 18.0));
             q.spawn(d.hex(ice.lighter(0.1), Vec2::new(-2.0, 2.0), z + 0.05, 12.0));
             for (x, h) in [(-9.0, 10.0), (0.0, 15.0), (8.0, 11.0)] {
@@ -659,6 +683,7 @@ fn enemy_visual(q: &mut ChildSpawnerCommands, d: &mut Draw, kind: EnemyKind, see
         EnemyKind::SerpentHead => {
             let green = Color::srgb(0.18, 0.55, 0.30);
             let z = 2.5;
+            q.spawn(d.glow(Color::srgba(0.4, 1.0, 0.5, 0.4), Vec2::ZERO, z - 0.2, 44.0));
             q.spawn(d.ellipse(green, Vec2::ZERO, z, 21.0, 16.0, 0.0));
             q.spawn(d.tri(Color::srgb(0.95, 0.3, 0.2), Vec2::new(26.0, 0.0), z - 0.1, Vec2::new(5.0, 16.0), -PI / 2.0));
             for y in [-6.0, 6.0] {
@@ -679,7 +704,7 @@ fn enemy_visual(q: &mut ChildSpawnerCommands, d: &mut Draw, kind: EnemyKind, see
 }
 
 fn bonus_visual(q: &mut ChildSpawnerCommands, d: &mut Draw, kind: BonusKind) {
-    q.spawn(d.circle(Color::srgba(1.0, 0.95, 0.6, 0.22), Vec2::ZERO, 0.0, 22.0));
+    q.spawn(d.glow(Color::srgba(1.0, 0.92, 0.55, 0.8), Vec2::ZERO, 0.0, 42.0));
     match kind {
         BonusKind::Hammer => {
             q.spawn(d.rect(Color::srgb(0.45, 0.28, 0.14), Vec2::new(0.0, -6.0), 0.1, Vec2::new(5.0, 22.0), 0.0));
@@ -728,7 +753,7 @@ fn animate_wobble(time: Res<Time>, mut q: Query<(&Wobble, &mut Transform)>) {
         tf.rotation = Quat::from_rotation_z(w.base + w.amp * (t * w.freq + w.phase).sin());
         if w.amp == 0.0 {
             // Pulsation d'échelle (yeux).
-            let s = 1.0 + 0.4 * (t * w.freq + w.phase).sin();
+            let s = 1.0 + 0.2 * (t * w.freq + w.phase).sin();
             tf.scale = Vec3::new(2.2 * s, 2.2 * s, 1.0);
         }
     }

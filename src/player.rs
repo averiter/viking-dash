@@ -33,6 +33,10 @@ pub struct Player {
     /// Temps écoulé depuis la mort (chute), `None` si vivant ou déjà retiré.
     pub dying: Option<f32>,
     pub dead: bool,
+    /// Annonce d'une nouvelle créature affichée par le HUD, et secondes restantes.
+    pub notice: Option<(&'static str, f32)>,
+    /// Premier bouclier dont l'annonce n'a pas encore été faite à ce joueur.
+    pub notice_from: u32,
 }
 
 impl Player {
@@ -105,6 +109,8 @@ pub fn spawn_player(commands: &mut Commands, d: &mut Draw, pos: Vec2, on: u32, i
                 powers: Powers::default(),
                 dying: None,
                 dead: false,
+                notice: None,
+                notice_from: on + 1,
             },
             GameEntity,
             Transform::from_translation(pos.extend(z)),
@@ -118,7 +124,7 @@ pub fn spawn_player(commands: &mut Commands, d: &mut Draw, pos: Vec2, on: u32, i
                 Visibility::Hidden,
             ));
             p.spawn((
-                d.circle(Color::srgba(1.0, 0.85, 0.3, 0.3), Vec2::ZERO, -0.6, 34.0),
+                d.glow(Color::srgba(1.0, 0.85, 0.3, 0.75), Vec2::ZERO, -0.6, 60.0),
                 HammerGlow,
                 Visibility::Hidden,
             ));
@@ -310,8 +316,8 @@ fn advance_jump(
 
         // Tous les dix boucliers : Ragnarök.
         if player.on % 10 == 0 {
-            ragnarok.0 = 2.6;
-            shake(&mut cams, None, 12.0);
+            ragnarok.0 = fx::RAGNAROK_DURATION;
+            shake(&mut cams, None, 6.0);
             sfx.play(&mut commands, Sfx::Thunder, 0.8);
             fx::float_text(&mut commands, &game_font, pos + Vec2::new(0.0, 110.0), "RAGNARÖK !", Color::srgb(1.0, 0.25, 0.15), 44.0);
         }
@@ -370,10 +376,24 @@ fn check_collisions(
     }
 }
 
-fn tick_powers(time: Res<Time>, mut q: Query<&mut Player>) {
+pub const NOTICE_DURATION: f32 = 3.0;
+
+fn tick_powers(time: Res<Time>, track: Res<Track>, mut q: Query<&mut Player>) {
+    let dt = time.delta_secs();
     for mut player in &mut q {
         if player.powers.mead > 0.0 {
-            player.powers.mead = (player.powers.mead - time.delta_secs()).max(0.0);
+            player.powers.mead = (player.powers.mead - dt).max(0.0);
+        }
+        // Nouvelle créature sur le bouclier suivant : le HUD l'annonce.
+        let next = player.on + 1;
+        if player.notice_from <= next {
+            player.notice_from = next + 1;
+            if let Some(name) = track.announce(next) {
+                player.notice = Some((name, NOTICE_DURATION));
+            }
+        }
+        if let Some((name, left)) = player.notice {
+            player.notice = (left > dt).then_some((name, left - dt));
         }
     }
 }
@@ -419,7 +439,7 @@ fn camera_follow(
         let target_y = match (state.get(), player) {
             (GameState::Playing, Some((p, ptf))) if p.alive() => ptf.translation.y + visible_h * 0.21,
             (GameState::Playing | GameState::GameOver, _) => tf.translation.y,
-            _ => 120.0,
+            _ => crate::menu_cam_y(visible_h),
         };
         let k = 1.0 - (-5.0 * dt).exp();
         let y = tf.translation.y + (target_y - tf.translation.y) * k;
@@ -449,6 +469,7 @@ fn aura_visibility(
     for (mut v, mut tf, child_of) in &mut hammer {
         let on = players.get(child_of.parent()).is_ok_and(|p| p.powers.hammer_jumps > 0);
         *v = if on { Visibility::Inherited } else { Visibility::Hidden };
-        tf.scale = Vec3::splat(34.0 + 4.0 * (t * 9.0).sin());
+        let r = 60.0 + 3.0 * (t * 4.0).sin();
+        tf.scale = Vec3::new(r, r, 1.0);
     }
 }
