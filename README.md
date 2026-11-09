@@ -91,6 +91,9 @@ des créatures devient irrégulière.
 - Décor d'altitude en parallaxe : des branches d'Yggdrasil entrent par les bords vers le niveau 12,
   le Bifröst apparaît au-delà du niveau 30 ; une douzaine d'emplacements par caméra, recyclés au
   fil de la montée.
+- Fjord : huit bandes de houle cuites en maillages glissent à des vitesses différentes (8 entités
+  au lieu de 126 vaguelettes) ; le drakkar flotte entre deux bandes, et son reflet est le même
+  maillage retourné sous un matériau sombre.
 - Aucun asset externe : tout est dessiné avec des primitives (`Mesh2d`) et les sons
   (cors, tambours, chocs, tonnerre) sont synthétisés en mémoire au démarrage (`src/audio.rs`).
 - Polices : titres et chiffres en *Luminari* (système) sur macOS, sinon en Fira Sans Bold embarquée

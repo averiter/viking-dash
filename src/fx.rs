@@ -11,7 +11,7 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy::sprite_render::AlphaMode2d;
 use rand::RngExt;
-use std::f32::consts::PI;
+use std::f32::consts::{PI, TAU};
 
 /// Élément de ciel attaché à la caméra d'un joueur (chaque caméra a son propre ciel).
 #[derive(Component)]
@@ -91,14 +91,39 @@ struct Flash;
 #[derive(Resource)]
 struct FlashMat(Handle<ColorMaterial>);
 
+/// Bande de houle : glisse sur une longueur d'onde, puis reprend (le raccord est invisible).
 #[derive(Component)]
 struct Wave {
-    phase: f32,
-    base: Vec2,
+    index: f32,
+    wavelength: f32,
+    speed: f32,
+    crest_y: f32,
 }
 
 #[derive(Component)]
 struct Ship;
+
+/// Reflet de la lune sur l'eau (scintille doucement).
+#[derive(Component)]
+struct MoonPath;
+
+/// Bandes de houle, de l'horizon vers le spectateur : (crête, amplitude, longueur d'onde, vitesse).
+/// Plus elles sont proches, plus elles sont hautes, espacées, sombres et rapides.
+const SWELL: [(f32, f32, f32, f32); 8] = [
+    (-176.0, 2.0, 64.0, 5.0),
+    (-196.0, 2.6, 80.0, 8.0),
+    (-222.0, 3.4, 100.0, 11.0),
+    (-254.0, 4.4, 124.0, 15.0),
+    (-294.0, 5.6, 150.0, 19.0),
+    (-344.0, 7.0, 180.0, 24.0),
+    (-404.0, 8.5, 215.0, 30.0),
+    (-476.0, 10.0, 250.0, 36.0),
+];
+/// Le drakkar flotte entre la deuxième et la troisième bande, qui lui recouvre le bas de la coque.
+const SHIP_Y: f32 = -219.0;
+const SHIP_Z: f32 = -4.75;
+/// Hauteur de la ligne de flottaison dans le dessin du drakkar.
+const WATERLINE: f32 = -6.0;
 
 /// Onde de choc : anneau qui s'élargit et s'efface.
 #[derive(Component)]
@@ -419,30 +444,55 @@ fn setup_sky(
     }
     commands.spawn(art.at(&meshes.add(b.build()), Vec2::ZERO, -6.5));
 
-    // Fjord, reflets de l'aurore et de la lune sur l'eau.
-    commands.spawn(d.rect(Color::srgb(0.05, 0.12, 0.26), Vec2::new(0.0, -520.0), -5.0, Vec2::new(4000.0, 700.0), 0.0));
-    let reflection = meshes.add(gradient_mesh(1, 2, |p| {
-        let k = p.y + 0.5;
-        Color::srgba(0.25, 0.85, 0.65, 0.15 * k * k)
+    // Fjord : fond sombre, brume d'horizon, puis huit bandes de houle qui glissent à des
+    // vitesses différentes (8 entités au lieu de 126 vaguelettes).
+    commands.spawn(d.rect(Color::srgb(0.025, 0.06, 0.17), Vec2::new(0.0, -520.0), -5.0, Vec2::new(4000.0, 700.0), 0.0));
+    let haze = meshes.add(gradient_mesh(1, 4, |p| {
+        let k = 1.0 - (p.y * 2.0).abs();
+        Color::srgba(0.55, 0.78, 0.95, 0.22 * k * k)
     }));
-    let mut strip = art.at(&reflection, Vec2::new(0.0, -245.0), -4.8);
-    strip.2.scale = Vec3::new(4000.0, 150.0, 1.0);
-    commands.spawn(strip);
-    let mut moonlight = d.glow(Color::srgba(0.8, 0.88, 1.0, 0.3), Vec2::new(210.0, -300.0), -4.7, 1.0);
-    moonlight.1.scale = Vec3::new(34.0, 130.0, 1.0);
-    commands.spawn(moonlight);
-    for row in 0..7 {
-        for k in 0..18 {
-            let base = Vec2::new(-800.0 + k as f32 * 95.0 + row as f32 * 23.0, -192.0 - row as f32 * 38.0);
-            commands.spawn((
-                d.ellipse(Color::srgba(0.45, 0.70, 0.95, 0.35), base, -4.5, 28.0, 3.0, 0.0),
-                Wave { phase: rng.random_range(0.0..6.3), base },
-            ));
-        }
+    let mut mist = art.at(&haze, Vec2::new(0.0, -166.0), -4.95);
+    mist.2.scale = Vec3::new(4000.0, 70.0, 1.0);
+    commands.spawn(mist);
+    for (k, (crest_y, amp, wavelength, speed)) in SWELL.into_iter().enumerate() {
+        let f = k as f32 / (SWELL.len() - 1) as f32;
+        // Près de l'horizon, l'eau prend le vert de l'aurore ; elle fonce vers le spectateur.
+        let body = Vec3::new(0.07, 0.29, 0.38).lerp(Vec3::new(0.03, 0.075, 0.20), f.powf(0.7));
+        let depth = SWELL.get(k + 1).map_or(520.0, |next| crest_y - next.0 + 40.0);
+        let mesh = wave_band(
+            wavelength,
+            amp,
+            depth,
+            Color::srgb(body.x, body.y, body.z),
+            Color::srgba(0.50, 0.74, 0.96, 0.30 + 0.25 * f),
+        );
+        commands.spawn((
+            art.at(&meshes.add(mesh), Vec2::new(0.0, crest_y), -4.9 + 0.1 * k as f32),
+            Wave { index: k as f32, wavelength, speed, crest_y },
+            NoFrustumCulling,
+        ));
     }
+    // Chemin de lune, posé sur la houle.
+    commands.spawn((MoonPath, art.at(&meshes.add(moon_path_mesh()), Vec2::new(210.0, -176.0), -4.1)));
 
-    // Drakkar : un seul maillage.
-    commands.spawn((Ship, art.at(&meshes.add(ship_mesh()), Vec2::new(-250.0, -205.0), -4.0)));
+    // Drakkar : un seul maillage, plus son reflet (le même maillage retourné, sous un
+    // matériau bleu sombre translucide).
+    let ship = meshes.add(ship_mesh());
+    let reflection_mat = mats.add(ColorMaterial {
+        color: Color::srgba(0.10, 0.20, 0.42, 0.26),
+        alpha_mode: AlphaMode2d::Blend,
+        ..default()
+    });
+    commands
+        .spawn((Ship, art.at(&ship, Vec2::new(-250.0, SHIP_Y), SHIP_Z)))
+        .with_children(|p| {
+            p.spawn((
+                Mesh2d(ship.clone()),
+                MeshMaterial2d(reflection_mat),
+                // Symétrie autour de la ligne de flottaison, écrasée ; dessinée par-dessus la houle.
+                Transform::from_xyz(0.0, WATERLINE * 1.45, 0.62).with_scale(Vec3::new(1.0, -0.45, 1.0)),
+            ));
+        });
 
     // Décor d'altitude en parallaxe (habillé par `seed_scenery` à chaque retour au menu)
     // et étoile filante : quelques entités recyclées par caméra.
@@ -517,25 +567,150 @@ fn mountain(b: &mut Baker, z: f32, apex: Vec2, w: f32, h: f32, lit: Color, shade
     }
 }
 
+/// Bande de houle : crête sinusoïdale, corps plein jusqu'à `depth`, liseré clair sur les crêtes.
+/// Plus large que n'importe quelle vue d'une longueur d'onde, pour pouvoir glisser d'autant.
+fn wave_band(wavelength: f32, amp: f32, depth: f32, body: Color, crest: Color) -> Mesh {
+    const HALF_W: f32 = 1300.0;
+    let mut b = Baker::new();
+    let step = wavelength / 12.0;
+    let height = |x: f32| amp * (TAU * x / wavelength).sin();
+    let thickness = 1.0 + amp * 0.22;
+    let mut x0 = -HALF_W - wavelength;
+    while x0 < HALF_W {
+        let x1 = x0 + step;
+        let (p0, p1) = (Vec2::new(x0, height(x0)), Vec2::new(x1, height(x1)));
+        b.poly(body, 0.0, &[Vec2::new(x0, -depth), Vec2::new(x1, -depth), p1, p0]);
+        if height((x0 + x1) / 2.0) > amp * 0.3 {
+            let down = Vec2::new(0.0, thickness);
+            b.poly(crest, 0.1, &[p0 - down, p1 - down, p1, p0]);
+        }
+        x0 = x1;
+    }
+    b.build()
+}
+
+/// Chemin de lune : traits horizontaux de plus en plus larges vers le spectateur (origine à l'horizon).
+fn moon_path_mesh() -> Mesh {
+    let mut b = Baker::new();
+    for k in 0..11 {
+        let f = k as f32 / 10.0;
+        let y = -8.0 - 250.0 * f * f - 14.0 * f;
+        let half = 9.0 + 34.0 * f;
+        // Décalage en quinconce : le reflet se brise sur la houle.
+        let x = if k % 2 == 0 { -half * 0.25 } else { half * 0.3 };
+        b.ellipse(Color::srgba(0.85, 0.92, 1.0, 0.30 * (1.0 - 0.8 * f)), Vec2::new(x, y), 0.0, half, 1.6 + 1.6 * f, 0.0);
+    }
+    b.build()
+}
+
+/// Drakkar vu de profil, proue (tête de dragon) à droite. Flottaison à `WATERLINE`.
 fn ship_mesh() -> Mesh {
     let mut b = Baker::new();
-    let hull = Color::srgb(0.36, 0.22, 0.12);
+    let hull = Color::srgb(0.40, 0.25, 0.14);
     let dark = Color::srgb(0.27, 0.16, 0.09);
-    b.rect(hull, Vec2::ZERO, 0.0, Vec2::new(120.0, 18.0), 0.0);
-    b.rect(dark, Vec2::new(0.0, -5.0), 0.05, Vec2::new(120.0, 3.0), 0.0);
-    b.tri(hull, Vec2::new(64.0, 12.0), 0.0, Vec2::new(16.0, 42.0), -0.25);
-    b.tri(hull, Vec2::new(-64.0, 12.0), 0.0, Vec2::new(16.0, 42.0), 0.25);
-    b.circle(Color::srgb(0.85, 0.2, 0.15), Vec2::new(68.0, 34.0), 0.1, 6.0);
-    b.rect(dark, Vec2::new(0.0, 40.0), -0.1, Vec2::new(4.0, 70.0), 0.0);
-    b.rect(Color::srgb(0.92, 0.88, 0.78), Vec2::new(0.0, 48.0), -0.2, Vec2::new(64.0, 46.0), 0.0);
-    for i in 0..3 {
-        b.rect(Color::srgb(0.75, 0.18, 0.15), Vec2::new(-20.0 + i as f32 * 20.0, 48.0), -0.15, Vec2::new(8.0, 46.0), 0.0);
+    let light = Color::srgb(0.58, 0.40, 0.22);
+    let cream = Color::srgb(0.93, 0.89, 0.78);
+    let red = Color::srgb(0.74, 0.18, 0.15);
+    const HALF_L: f32 = 86.0;
+
+    // Coque : bordé relevé aux deux bouts, quille qui remonte vers l'étrave et l'étambot.
+    let top = |x: f32| 6.0 + 14.0 * (x.abs() / HALF_L).powf(2.2);
+    let keel = |x: f32| -13.0 + 17.0 * (x.abs() / HALF_L).powi(3);
+    // Bande de coque entre deux hauteurs relatives (0 = quille, 1 = plat-bord).
+    let strake = |b: &mut Baker, color: Color, z: f32, lo: f32, hi: f32| {
+        const N: usize = 28;
+        for i in 0..N {
+            let x0 = -HALF_L + 2.0 * HALF_L * i as f32 / N as f32;
+            let x1 = -HALF_L + 2.0 * HALF_L * (i + 1) as f32 / N as f32;
+            let at = |x: f32, k: f32| Vec2::new(x, keel(x) + (top(x) - keel(x)) * k);
+            b.poly(color, z, &[at(x0, lo), at(x1, lo), at(x1, hi), at(x0, hi)]);
+        }
+    };
+    strake(&mut b, hull, 0.0, 0.0, 1.0);
+    strake(&mut b, dark, 0.05, 0.0, 0.22);
+    strake(&mut b, dark, 0.05, 0.42, 0.47);
+    strake(&mut b, dark, 0.05, 0.66, 0.71);
+    strake(&mut b, light, 0.06, 0.88, 1.0);
+
+    // Étrave et étambot : cols effilés qui se recourbent. Les normales sont prises aux points
+    // (moyenne des deux segments voisins) pour que la courbe reste lisse.
+    let neck = |b: &mut Baker, spine: &[(f32, f32, f32)]| {
+        let p = |i: usize| Vec2::new(spine[i].0, spine[i].1);
+        let normal = |i: usize| {
+            let prev = p(i.saturating_sub(1));
+            let next = p((i + 1).min(spine.len() - 1));
+            (next - prev).normalize().perp()
+        };
+        for i in 0..spine.len() - 1 {
+            let (p0, p1, n0, n1) = (p(i), p(i + 1), normal(i), normal(i + 1));
+            let (t0, t1) = (spine[i].2, spine[i + 1].2);
+            b.poly(hull, 0.0, &[p0 + n0 * t0, p1 + n1 * t1, p1 - n1 * t1, p0 - n0 * t0]);
+            b.poly(light, 0.02, &[p0 + n0 * t0, p1 + n1 * t1, p1 + n1 * (t1 * 0.4), p0 + n0 * (t0 * 0.4)]);
+        }
+    };
+    neck(&mut b, &[(74.0, 9.0, 8.5), (82.0, 17.0, 7.4), (88.0, 27.0, 6.4), (92.0, 38.0, 5.5), (94.5, 49.0, 4.8), (95.0, 60.0, 4.2)]);
+    neck(&mut b, &[(-74.0, 9.0, 8.5), (-82.0, 17.0, 7.2), (-88.0, 26.0, 6.0), (-92.0, 36.0, 5.0), (-94.0, 46.0, 4.0), (-93.0, 54.0, 3.2)]);
+    // Queue enroulée à la poupe.
+    b.arc(hull, Vec2::new(-87.0, 56.0), 0.0, 3.2, 6.8, -0.3, 4.2);
+    // Tête de dragon à la proue : crête, museau, gueule rouge, œil.
+    let head = Vec2::new(99.0, 66.0);
+    b.tri(dark, head + Vec2::new(-10.0, 5.0), -0.02, Vec2::new(7.0, 12.0), 0.9);
+    b.tri(dark, head + Vec2::new(-5.0, 8.0), -0.02, Vec2::new(6.0, 10.0), 0.5);
+    b.ellipse(hull, head, 0.03, 10.0, 6.5, -0.15);
+    b.tri(hull, head + Vec2::new(11.0, 0.0), 0.03, Vec2::new(9.0, 12.0), -PI / 2.0 - 0.15);
+    b.tri(red, head + Vec2::new(10.0, -4.5), 0.02, Vec2::new(5.0, 9.0), -PI / 2.0 - 0.5);
+    b.circle(Color::srgb(1.0, 0.86, 0.3), head + Vec2::new(3.0, 1.5), 0.05, 2.0);
+    b.circle(Color::BLACK, head + Vec2::new(3.6, 1.5), 0.06, 0.9);
+
+    // Mât, vergue, haubans.
+    let mast_top = Vec2::new(-4.0, 100.0);
+    b.rect(dark, Vec2::new(-4.0, 54.0), -0.3, Vec2::new(4.0, 96.0), 0.0);
+    for end in [Vec2::new(86.0, 24.0), Vec2::new(-86.0, 22.0)] {
+        let v = end - mast_top;
+        b.rect(Color::srgba(0.75, 0.68, 0.55, 0.7), mast_top + v / 2.0, -0.35, Vec2::new(v.length(), 1.0), v.to_angle());
     }
-    for i in 0..5 {
-        let c = [Color::srgb(0.7, 0.2, 0.15), Color::srgb(0.2, 0.4, 0.65)][i % 2];
-        let p = Vec2::new(-40.0 + i as f32 * 20.0, 8.0);
-        b.circle(c, p, 0.2, 7.0);
-        b.circle(Color::srgb(0.75, 0.75, 0.8), p, 0.3, 2.0);
+    // Voile gonflée vers la proue, à bandes rouges et crème, ombrée dans le creux.
+    const STRIPES: usize = 7;
+    const ROWS: usize = 8;
+    let sail = |u: f32, t: f32| {
+        // u : -1 (bord arrière) à 1 (bord avant) ; t : 0 (vergue) à 1 (bordure basse).
+        let belly = (t * PI).sin();
+        Vec2::new(-4.0 + u * (41.0 + 5.0 * belly) + 9.0 * belly, 92.0 - 58.0 * t)
+    };
+    for k in 0..STRIPES {
+        let (u0, u1) = (-1.0 + 2.0 * k as f32 / STRIPES as f32, -1.0 + 2.0 * (k + 1) as f32 / STRIPES as f32);
+        let color = if k % 2 == 0 { red } else { cream };
+        for j in 0..ROWS {
+            let (t0, t1) = (j as f32 / ROWS as f32, (j + 1) as f32 / ROWS as f32);
+            b.poly(color, -0.2, &[sail(u0, t0), sail(u1, t0), sail(u1, t1), sail(u0, t1)]);
+        }
+    }
+    for j in 0..ROWS {
+        let (t0, t1) = (j as f32 / ROWS as f32, (j + 1) as f32 / ROWS as f32);
+        // Bord arrière dans l'ombre, bord avant accroché par la lune.
+        b.poly(Color::srgba(0.0, 0.0, 0.1, 0.20), -0.15, &[sail(-1.0, t0), sail(-0.45, t0), sail(-0.45, t1), sail(-1.0, t1)]);
+        b.poly(Color::srgba(1.0, 1.0, 1.0, 0.08), -0.15, &[sail(0.78, t0), sail(1.0, t0), sail(1.0, t1), sail(0.78, t1)]);
+    }
+    b.rect(dark, Vec2::new(-4.0, 92.5), -0.1, Vec2::new(90.0, 3.0), 0.0);
+    // Flamme en tête de mât.
+    b.tri(red, mast_top + Vec2::new(9.0, 2.0), -0.1, Vec2::new(6.0, 18.0), -PI / 2.0);
+
+    // Rames, puis boucliers accrochés au plat-bord.
+    for i in 0..6 {
+        let x = -52.0 + i as f32 * 20.0;
+        b.rect(light, Vec2::new(x - 7.0, top(x) - 17.0), 0.08, Vec2::new(2.0, 34.0), -0.42);
+    }
+    let colors = [red, Color::srgb(0.2, 0.4, 0.65), Color::srgb(0.82, 0.62, 0.18)];
+    for i in 0..7 {
+        let x = -60.0 + i as f32 * 20.0;
+        let p = Vec2::new(x, top(x) - 3.0);
+        b.circle(dark, p, 0.19, 7.6);
+        b.circle(colors[i % 3], p, 0.2, 6.6);
+        b.circle(Color::srgb(0.78, 0.78, 0.82), p, 0.3, 2.0);
+    }
+    // Écume à la flottaison.
+    for (x, rx) in [(80.0, 11.0), (36.0, 6.0), (-24.0, 7.0), (-76.0, 12.0)] {
+        b.ellipse(Color::srgba(0.9, 0.96, 1.0, 0.32), Vec2::new(x, WATERLINE + 0.5), 0.4, rx, 1.4, 0.0);
     }
     b.build()
 }
@@ -948,16 +1123,22 @@ fn ragnarok_tick(time: Res<Time>, mut r: ResMut<Ragnarok>, flash: Res<FlashMat>,
 
 fn waves_and_ship(
     time: Res<Time>,
-    mut waves: Query<(&Wave, &mut Transform), Without<Ship>>,
-    mut ship: Query<&mut Transform, With<Ship>>,
+    mut waves: Query<(&Wave, &mut Transform), (Without<Ship>, Without<MoonPath>)>,
+    mut ship: Query<&mut Transform, (With<Ship>, Without<MoonPath>)>,
+    mut moon_path: Query<&mut Transform, With<MoonPath>>,
 ) {
     let t = time.elapsed_secs();
     for (w, mut tf) in &mut waves {
-        tf.translation.x = w.base.x + 14.0 * (t * 0.9 + w.phase).sin();
-        tf.translation.y = w.base.y + 2.5 * (t * 1.4 + w.phase).sin();
+        tf.translation.x = (w.speed * t).rem_euclid(w.wavelength);
+        tf.translation.y = w.crest_y + 1.5 * (t * 0.7 + w.index * 1.3).sin();
     }
     for mut tf in &mut ship {
-        tf.translation.y = -205.0 + 4.0 * (t * 1.2).sin();
-        tf.rotation = Quat::from_rotation_z(0.04 * (t * 0.9 + PI / 3.0).sin());
+        // Le drakkar traverse lentement le fjord, tangue et roule.
+        tf.translation.x = (-250.0 + 9.0 * t + 950.0).rem_euclid(1900.0) - 950.0;
+        tf.translation.y = SHIP_Y + 2.5 * (t * 1.1).sin();
+        tf.rotation = Quat::from_rotation_z(0.035 * (t * 0.8 + PI / 3.0).sin());
+    }
+    for mut tf in &mut moon_path {
+        tf.scale = Vec3::new(1.0 + 0.1 * (t * 1.7).sin(), 1.0, 1.0);
     }
 }

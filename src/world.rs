@@ -119,10 +119,6 @@ impl Draw<'_> {
         let m = self.shapes.circle.clone();
         self.bundle(&m, color, pos, z, Vec2::splat(r), 0.0)
     }
-    pub fn ellipse(&mut self, color: Color, pos: Vec2, z: f32, rx: f32, ry: f32, rot: f32) -> ShapeBundle {
-        let m = self.shapes.circle.clone();
-        self.bundle(&m, color, pos, z, Vec2::new(rx, ry), rot)
-    }
     pub fn rect(&mut self, color: Color, pos: Vec2, z: f32, size: Vec2, rot: f32) -> ShapeBundle {
         let m = self.shapes.square.clone();
         self.bundle(&m, color, pos, z, size, rot)

@@ -38,7 +38,8 @@ impl Baker {
 
     /// Secteur d'anneau entre deux rayons et deux angles (un disque si `r_in` vaut 0).
     pub fn arc(&mut self, color: Color, pos: Vec2, z: f32, r_in: f32, r_out: f32, a0: f32, a1: f32) {
-        let segs = (((a1 - a0).abs() * r_out / 5.0).ceil() as usize).clamp(3, 72);
+        // Assez de segments pour qu'un petit disque reste rond (et non un triangle).
+        let segs = (((a1 - a0).abs() * r_out.sqrt() * 1.6).ceil() as usize).clamp(3, 72);
         for k in 0..segs {
             let u0 = Vec2::from_angle(a0 + (a1 - a0) * k as f32 / segs as f32);
             let u1 = Vec2::from_angle(a0 + (a1 - a0) * (k + 1) as f32 / segs as f32);
