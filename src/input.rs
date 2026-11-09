@@ -22,6 +22,12 @@ pub struct Inputs {
     pub choose_solo: bool,
     pub choose_duo: bool,
     pub escape: bool,
+    /// Ouvre l'aide depuis le menu.
+    pub help: bool,
+    /// Pages de l'aide : suivante, précédente, retour au menu.
+    pub next: bool,
+    pub prev: bool,
+    pub back: bool,
 }
 
 pub struct InputPlugin;
@@ -103,4 +109,12 @@ fn read_inputs(
             .iter()
             .any(|(_, g)| g.just_pressed(GamepadButton::North) || g.just_pressed(GamepadButton::Start));
     inputs.escape = keys.just_pressed(KeyCode::Escape);
+    let pad = |buttons: &[GamepadButton]| pads.iter().any(|(_, g)| buttons.iter().any(|b| g.just_pressed(*b)));
+    inputs.help = keys.any_just_pressed([KeyCode::KeyH, KeyCode::Digit3, KeyCode::Numpad3, KeyCode::F1])
+        || pad(&[GamepadButton::West]);
+    inputs.next = keys.any_just_pressed([KeyCode::ArrowRight, KeyCode::KeyD, KeyCode::Space, KeyCode::Enter, KeyCode::NumpadEnter])
+        || pad(&[GamepadButton::DPadRight, GamepadButton::RightTrigger, GamepadButton::South]);
+    inputs.prev = keys.any_just_pressed([KeyCode::ArrowLeft, KeyCode::KeyA, KeyCode::KeyQ])
+        || pad(&[GamepadButton::DPadLeft, GamepadButton::LeftTrigger]);
+    inputs.back = inputs.escape || keys.just_pressed(KeyCode::Backspace) || pad(&[GamepadButton::East]);
 }

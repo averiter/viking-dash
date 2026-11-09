@@ -9,6 +9,7 @@ mod audio;
 #[cfg(not(target_arch = "wasm32"))]
 mod autotest;
 mod fx;
+mod help;
 mod input;
 mod player;
 mod ui;
@@ -28,6 +29,8 @@ pub enum GameState {
     #[default]
     Loading,
     Menu,
+    /// Pages d'aide, ouvertes depuis le menu.
+    Help,
     Playing,
     GameOver,
 }
@@ -148,6 +151,7 @@ fn main() {
         player::PlayerPlugin,
         fx::FxPlugin,
         ui::UiPlugin,
+        help::HelpPlugin,
     ));
     #[cfg(not(target_arch = "wasm32"))]
     app.add_plugins(autotest::AutoTestPlugin);

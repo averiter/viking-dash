@@ -51,6 +51,14 @@ fn drive(
         }
         next.set(GameState::Playing);
     }
+    // `VIKING_AUTOTEST_HELP=n` ouvre la page n de l'aide au lieu de jouer.
+    if t > 1.5 && !at.started && *state.get() == GameState::Menu {
+        if let Some(page) = std::env::var("VIKING_AUTOTEST_HELP").ok().and_then(|v| v.parse().ok()) {
+            at.started = true;
+            commands.insert_resource(crate::help::HelpPage::open(page));
+            next.set(GameState::Help);
+        }
+    }
     if t > at.next_jump && *state.get() == GameState::Playing {
         jump.0 = [true; crate::MAX_PLAYERS];
         at.next_jump = t + 1.1;

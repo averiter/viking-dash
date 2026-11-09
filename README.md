@@ -49,6 +49,9 @@ est conservé dans le `localStorage` du navigateur.
 - Les créatures orbitent autour des boucliers : il faut traverser l'anneau quand la voie est libre.
 - **Niveau** = nombre de boucliers franchis. Le record est sauvegardé dans `~/.viking_dash_best`.
 - **Berserk** : enchaîne les sauts en moins de 0,7 s pour monter un combo et gagner de l'or.
+- **Aide** : bouton « AIDE » du menu (touche **H**, **3**, **F1** ou bouton **X** de la manette). Cinq pages
+  illustrées avec les dessins du jeu : règles, pouvoirs, or, créatures, chacun avec une phrase sur son origine dans la mythologie nordique. Flèches ou clic pour tourner
+  les pages, **Échap** pour revenir au menu.
 
 ### À deux (écran partagé)
 
@@ -104,7 +107,7 @@ des créatures devient irrégulière.
 - `VIKING_ALTITUDE=8000 cargo run` montre tout de suite le décor des hauteurs (branches dès 2800,
   Bifröst dès 7000).
 - `VIKING_AUTOTEST=<dossier> cargo run` joue tout seul et enregistre des captures d'écran
-  (utilisé pour vérifier le rendu).
+  (utilisé pour vérifier le rendu). `VIKING_AUTOTEST_HELP=<n>` ouvre la page n de l'aide.
 
 ## Structure
 
@@ -117,6 +120,7 @@ des créatures devient irrégulière.
 | `src/player.rs` | Sauts, collisions, pouvoirs, mort, caméras (une par joueur) |
 | `src/fx.rs` | Ciel, lune, aurore, décor en parallaxe, montagnes, fjord, drakkar, particules, ondes, Ragnarök |
 | `src/ui.rs` | Menu, HUD, écran de fin |
+| `src/help.rs` | Pages d'aide : textes en UI, dessins du jeu rendus par-dessus par une caméra à part |
 | `src/audio.rs` | Synthèse des sons et encodage WAV |
 | `src/autotest.rs` | Mode de test automatique (hors web) |
 | `web/index.html`, `build-web.sh` | Page et script de build pour le navigateur |

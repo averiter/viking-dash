@@ -1,6 +1,7 @@
 //! Menu, affichage en jeu (un par joueur) et écran de fin.
 
 use crate::audio::{Sfx, SfxBank};
+use crate::help::HelpPage;
 use crate::input::Inputs;
 use crate::player::{Player, NOTICE_DURATION};
 use crate::{split_horizontal, AutoStart, GameFont, GameMode, GameState, PlayerCam, Score, VIEW_H};
@@ -21,7 +22,7 @@ pub fn font(game_font: &GameFont, size: f32) -> TextFont {
 }
 
 /// Comme `font`, pour les textes courants (consignes, aides, HUD secondaire).
-fn body_font(game_font: &GameFont, size: f32) -> TextFont {
+pub fn body_font(game_font: &GameFont, size: f32) -> TextFont {
     TextFont {
         font: game_font.body.clone(),
         ..font(game_font, size)
@@ -37,13 +38,13 @@ pub fn world_font(game_font: &GameFont, size: f32) -> TextFont {
     }
 }
 
-const GOLD: Color = Color::srgb(1.0, 0.85, 0.35);
-const PALE: Color = Color::srgb(0.9, 0.92, 1.0);
+pub const GOLD: Color = Color::srgb(1.0, 0.85, 0.35);
+pub const PALE: Color = Color::srgb(0.9, 0.92, 1.0);
 const P1_COLOR: Color = Color::srgb(1.0, 0.55, 0.45);
 const P2_COLOR: Color = Color::srgb(0.55, 0.75, 1.0);
 const NOTICE_COLOR: Color = Color::srgb(1.0, 0.92, 0.7);
-const PANEL_BG: Color = Color::srgba(0.02, 0.04, 0.12, 0.84);
-const BUTTON_BG: Color = Color::srgba(0.10, 0.15, 0.34, 0.95);
+pub const PANEL_BG: Color = Color::srgba(0.02, 0.04, 0.12, 0.84);
+pub const BUTTON_BG: Color = Color::srgba(0.10, 0.15, 0.34, 0.95);
 const BUTTON_HOVER: Color = Color::srgba(0.24, 0.31, 0.56, 0.95);
 
 #[derive(Component)]
@@ -67,9 +68,17 @@ struct HudText {
     kind: HudKind,
 }
 
-/// Bouton du menu : nombre de joueurs.
+/// Bouton du menu : lance une partie à `n` joueurs.
 #[derive(Component)]
 struct ModeButton(u8);
+
+/// Bouton du menu : ouvre l'aide.
+#[derive(Component)]
+struct HelpButton;
+
+/// Bouton qui s'éclaircit sous le curseur de la souris.
+#[derive(Component)]
+pub struct Hoverable;
 
 /// Aide d'un bouton du menu, adaptée à l'appareil et à l'orientation.
 #[derive(Component)]
@@ -84,17 +93,17 @@ impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<GameOverDelay>()
             .add_systems(OnEnter(GameState::Menu), spawn_menu)
-            .add_systems(Update, (menu_input, menu_buttons, menu_taps, menu_hints).run_if(in_state(GameState::Menu)))
+            .add_systems(Update, (menu_input, menu_taps, menu_hints).run_if(in_state(GameState::Menu)))
             .add_systems(OnEnter(GameState::Playing), (spawn_hud, start_horn))
             .add_systems(Update, (update_hud, escape_to_menu).run_if(in_state(GameState::Playing)))
             .add_systems(OnEnter(GameState::GameOver), (despawn_hud, spawn_game_over))
             .add_systems(Update, game_over_input.run_if(in_state(GameState::GameOver)))
-            .add_systems(Update, (blink, scale_shadows));
+            .add_systems(Update, (blink, scale_shadows, hover_buttons));
     }
 }
 
 /// Ombre portée ; son décalage est ajusté à la taille du texte par `scale_shadows`.
-fn shadow() -> TextShadow {
+pub fn shadow() -> TextShadow {
     TextShadow {
         offset: Vec2::splat(2.0),
         color: Color::srgba(0.0, 0.0, 0.0, 0.75),
@@ -122,7 +131,7 @@ fn scale_shadows(mut q: Query<(&TextFont, &ComputedUiRenderTargetInfo, &mut Text
 }
 
 /// Écran tactile ? (sur le web uniquement : les aides parlent alors de toucher, pas de touches)
-fn touch_device() -> bool {
+pub fn touch_device() -> bool {
     #[cfg(target_arch = "wasm32")]
     {
         web_sys::window().is_some_and(|w| w.navigator().max_touch_points() > 0)
@@ -144,7 +153,7 @@ fn mode_hint(players: u8, touch: bool, horizontal: bool) -> &'static str {
     }
 }
 
-fn fullscreen_column() -> Node {
+pub fn fullscreen_column() -> Node {
     Node {
         position_type: PositionType::Absolute,
         width: Val::Percent(100.0),
@@ -164,6 +173,7 @@ fn mode_button(game_font: &GameFont, players: u8, title: &str, hint: &str) -> im
     let hint_font = body_font(game_font, 20.0);
     (
         ModeButton(players),
+        Hoverable,
         Node {
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::Center,
@@ -250,7 +260,41 @@ fn spawn_menu(
                             mode_button(&game_font, 2, "2 JOUEURS", mode_hint(2, touch, horizontal)),
                         ],
                     ),
-                    (Text::new(format!("Record : {}", score.best)), font(&game_font, 26.0), TextColor(GOLD)),
+                    (
+                        Node {
+                            flex_direction: FlexDirection::Row,
+                            align_items: AlignItems::Center,
+                            column_gap: Val::VMin(4.0),
+                            ..default()
+                        },
+                        children![
+                            (
+                                HelpButton,
+                                Hoverable,
+                                Node {
+                                    flex_direction: FlexDirection::Row,
+                                    align_items: AlignItems::Center,
+                                    padding: UiRect::axes(Val::VMin(2.4), Val::VMin(1.0)),
+                                    border: UiRect::all(Val::Px(2.0)),
+                                    border_radius: BorderRadius::all(Val::Px(12.0)),
+                                    column_gap: Val::VMin(1.6),
+                                    ..default()
+                                },
+                                BorderColor::all(GOLD),
+                                BackgroundColor(BUTTON_BG),
+                                children![
+                                    (Text::new("AIDE"), font(&game_font, 26.0), TextColor(GOLD), shadow()),
+                                    (
+                                        Text::new(if touch { "Comment jouer" } else { "Touche H" }),
+                                        body_font(&game_font, 20.0),
+                                        TextColor(PALE),
+                                        shadow(),
+                                    ),
+                                ],
+                            ),
+                            (Text::new(format!("Record : {}", score.best)), font(&game_font, 26.0), TextColor(GOLD)),
+                        ],
+                    ),
                 ],
             ),
         ],
@@ -283,11 +327,15 @@ fn menu_input(
     mut auto: ResMut<AutoStart>,
     mut mode: ResMut<GameMode>,
     mut next: ResMut<NextState<GameState>>,
+    mut page: ResMut<HelpPage>,
 ) {
     if auto.0 {
         auto.0 = false;
         let players = mode.players;
         start_game(players, &mut mode, &mut next);
+    } else if inputs.help {
+        *page = HelpPage::open(0);
+        next.set(GameState::Help);
     } else if inputs.choose_duo {
         start_game(2, &mut mode, &mut next);
     } else if inputs.choose_solo {
@@ -295,11 +343,11 @@ fn menu_input(
     }
 }
 
-/// Survol à la souris : éclaircit le bouton sous le curseur. Le clic lui-même passe
-/// par `menu_taps`, ce qui évite de dépendre du picking de Bevy.
-fn menu_buttons(
+/// Survol à la souris : éclaircit le bouton sous le curseur. Les clics passent par
+/// les contacts de `Inputs`, ce qui évite de dépendre du picking de Bevy.
+fn hover_buttons(
     window: Single<&Window, With<PrimaryWindow>>,
-    mut buttons: Query<(&ComputedNode, &UiGlobalTransform, &mut BackgroundColor), With<ModeButton>>,
+    mut buttons: Query<(&ComputedNode, &UiGlobalTransform, &mut BackgroundColor), With<Hoverable>>,
 ) {
     let cursor = window.cursor_position().map(|p| p * window.scale_factor());
     for (node, transform, mut bg) in &mut buttons {
@@ -318,13 +366,22 @@ fn menu_taps(
     inputs: Res<Inputs>,
     window: Single<&Window, With<PrimaryWindow>>,
     buttons: Query<(&ComputedNode, &UiGlobalTransform, &ModeButton)>,
+    help: Query<(&ComputedNode, &UiGlobalTransform), With<HelpButton>>,
     mut mode: ResMut<GameMode>,
     mut next: ResMut<NextState<GameState>>,
+    mut page: ResMut<HelpPage>,
 ) {
     if inputs.taps.is_empty() {
         return;
     }
     let scale = window.scale_factor();
+    for (node, transform) in &help {
+        if inputs.taps.iter().any(|tap| node.contains_point(*transform, *tap * scale)) {
+            *page = HelpPage::open(0);
+            next.set(GameState::Help);
+            return;
+        }
+    }
     for (node, transform, button) in &buttons {
         if inputs.taps.iter().any(|tap| node.contains_point(*transform, *tap * scale)) {
             start_game(button.0, &mut mode, &mut next);

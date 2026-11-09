@@ -557,7 +557,7 @@ fn spawn_platform(
 // ---------- visuels ----------
 
 /// Une créature : corps cuit en un maillage, plus les seuls morceaux qui bougent ou brillent.
-fn enemy_visual(q: &mut ChildSpawnerCommands, d: &mut Draw, art: &Art, kind: EnemyKind, seed: usize) {
+pub fn enemy_visual(q: &mut ChildSpawnerCommands, d: &mut Draw, art: &Art, kind: EnemyKind, seed: usize) {
     let s = seed as f32;
     let z = 2.0;
     let o = Vec2::ZERO;
@@ -610,7 +610,7 @@ fn enemy_visual(q: &mut ChildSpawnerCommands, d: &mut Draw, art: &Art, kind: Ene
     }
 }
 
-fn bonus_visual(q: &mut ChildSpawnerCommands, d: &mut Draw, art: &Art, kind: BonusKind) {
+pub fn bonus_visual(q: &mut ChildSpawnerCommands, d: &mut Draw, art: &Art, kind: BonusKind) {
     q.spawn(d.glow(Color::srgba(1.0, 0.92, 0.55, 0.8), Vec2::ZERO, 0.0, 42.0));
     q.spawn(art.at(art.bonus(kind), Vec2::ZERO, 0.1));
 }
