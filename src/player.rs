@@ -7,7 +7,7 @@ use crate::world::{Bonus, BonusKind, Draw, Enemy, Orbiter, Track, PLAYER_R};
 use crate::{save_best, AutoJump, CamShake, GameEntity, GameFont, GameMode, GameState, PlayerCam, Powers, Score};
 use bevy::color::Luminance;
 use bevy::prelude::*;
-use rand::Rng;
+use rand::RngExt;
 use std::f32::consts::{PI, TAU};
 
 const JUMP_SPEED: f32 = 560.0;

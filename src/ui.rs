@@ -102,7 +102,6 @@ fn mode_button(game_font: &GameFont, players: u8, title: &str, hint: &str) -> im
     let title_font = font(game_font, 30.0);
     let hint_font = font(game_font, 16.0);
     (
-        Button,
         ModeButton(players),
         Node {
             flex_direction: FlexDirection::Column,
@@ -208,23 +207,29 @@ fn menu_input(
     }
 }
 
+/// Survol à la souris : éclaircit le bouton sous le curseur. Le clic lui-même passe
+/// par `menu_taps`, ce qui évite de dépendre du picking de Bevy.
 fn menu_buttons(
-    mut buttons: Query<(&Interaction, &ModeButton, &mut BackgroundColor), Changed<Interaction>>,
-    mut mode: ResMut<GameMode>,
-    mut next: ResMut<NextState<GameState>>,
+    window: Single<&Window, With<PrimaryWindow>>,
+    mut buttons: Query<(&ComputedNode, &UiGlobalTransform, &mut BackgroundColor), With<ModeButton>>,
 ) {
-    for (interaction, button, mut bg) in &mut buttons {
-        match interaction {
-            Interaction::Pressed => start_game(button.0, &mut mode, &mut next),
-            Interaction::Hovered => bg.0 = Color::srgba(0.2, 0.25, 0.45, 0.85),
-            Interaction::None => bg.0 = Color::srgba(0.05, 0.08, 0.2, 0.75),
+    let cursor = window.cursor_position().map(|p| p * window.scale_factor());
+    for (node, transform, mut bg) in &mut buttons {
+        let hovered = cursor.is_some_and(|p| node.contains_point(*transform, p));
+        let color = if hovered {
+            Color::srgba(0.2, 0.25, 0.45, 0.85)
+        } else {
+            Color::srgba(0.05, 0.08, 0.2, 0.75)
+        };
+        if bg.0 != color {
+            bg.0 = color;
         }
     }
 }
 
 /// Tactile : un doigt posé sur un bouton du menu le déclenche, même si le contact
-/// commence et finit dans la même frame (fréquent sur un téléphone lent), cas où
-/// l'`Interaction` de Bevy ne voit plus la position du doigt.
+/// commence et finit dans la même frame (fréquent sur un téléphone lent). Sert aussi
+/// au clic de souris.
 fn menu_taps(
     inputs: Res<Inputs>,
     window: Single<&Window, With<PrimaryWindow>>,

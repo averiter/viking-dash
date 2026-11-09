@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  WASM_BINDGEN_VERSION: "0.2.129" # doit correspondre à la version de la crate wasm-bindgen dans Cargo.lock
+  WASM_BINDGEN_VERSION: "0.2.130" # doit correspondre à la version de la crate wasm-bindgen dans Cargo.lock
   BINARYEN_VERSION: "version_133"
 
 jobs:

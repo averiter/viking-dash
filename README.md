@@ -1,6 +1,6 @@
 # Viking Dash — La Route de Valhalla
 
-Jeu d'adresse en Rust + [Bevy 0.19](https://bevy.org), inspiré du *Cochon d'Halloween* :
+Jeu d'adresse en Rust + [Bevy 0.20](https://bevy.org), inspiré du *Cochon d'Halloween* :
 saute de bouclier en bouclier en cliquant au bon moment, sans toucher les créatures
 qui tournent autour.
 
@@ -25,7 +25,7 @@ sur n'importe quel hébergement statique (GitHub Pages, Netlify…). Prérequis 
 
 ```bash
 rustup target add wasm32-unknown-unknown
-cargo install wasm-bindgen-cli --version 0.2.129
+cargo install wasm-bindgen-cli --version 0.2.130
 brew install binaryen   # wasm-opt, facultatif : réduit le .wasm d'environ un quart
 ```
 
@@ -35,7 +35,7 @@ sélection minimale des fonctionnalités Bevy dans `Cargo.toml` (2D, interface, 
 ### Déploiement sur GitHub Pages
 
 Le workflow [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) compile la version web
-à chaque push sur `master` (Rust stable, `wasm-bindgen` 0.2.129 et `wasm-opt` téléchargés depuis
+à chaque push sur `master` (Rust stable, `wasm-bindgen` 0.2.130 et `wasm-opt` téléchargés depuis
 leurs releases) et publie le dossier `web/` sur <https://averiter.github.io/viking-dash/>.
 Le cache cargo rend les builds suivants nettement plus rapides que le premier (~15 min).
 

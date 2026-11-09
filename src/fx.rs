@@ -7,7 +7,7 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::color::{Alpha, Luminance};
 use bevy::prelude::*;
 use bevy::sprite_render::AlphaMode2d;
-use rand::Rng;
+use rand::RngExt;
 use std::f32::consts::PI;
 
 /// Élément de ciel attaché à la caméra d'un joueur (chaque caméra a son propre ciel).

@@ -6,7 +6,7 @@ use crate::{ui, GameEntity, GameFont, GameMode, GameState, PlayerCam, Score};
 use bevy::color::Luminance;
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
-use rand::Rng;
+use rand::RngExt;
 use std::collections::HashMap;
 use std::f32::consts::{PI, TAU};
 
@@ -247,7 +247,7 @@ struct Spec {
     bonus: Option<BonusKind>,
 }
 
-fn difficulty(n: u32, rng: &mut impl Rng) -> Spec {
+fn difficulty(n: u32, rng: &mut impl RngExt) -> Spec {
     let nf = n as f32;
     let tier = match n {
         0..=7 => 0,
