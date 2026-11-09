@@ -1,6 +1,7 @@
 //! Le monde : boucliers-plateformes, créatures en orbite, bonus, génération
 //! procédurale et difficulté progressive.
 
+use crate::art::Art;
 use crate::player::{self, Player};
 use crate::{GameEntity, GameMode, GameState, PlayerCam, Score};
 use bevy::asset::RenderAssetUsages;
@@ -17,15 +18,6 @@ pub const ORBIT_R2: f32 = 138.0;
 pub const ENEMY_R: f32 = 17.0;
 pub const PLAYER_R: f32 = 15.0;
 
-const SHIELD_COLORS: [Color; 6] = [
-    Color::srgb(0.70, 0.18, 0.14),
-    Color::srgb(0.16, 0.36, 0.62),
-    Color::srgb(0.82, 0.62, 0.18),
-    Color::srgb(0.22, 0.50, 0.30),
-    Color::srgb(0.55, 0.22, 0.52),
-    Color::srgb(0.86, 0.84, 0.76),
-];
-
 pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
@@ -38,7 +30,7 @@ impl Plugin for WorldPlugin {
             .add_systems(OnEnter(GameState::Playing), spawn_missing_players)
             .add_systems(
                 Update,
-                (extend_track, orbit_enemies, animate_wobble, animate_bob),
+                (extend_track, orbit_enemies, animate_wobble, animate_bob, animate_bounce),
             );
     }
 }
@@ -49,12 +41,11 @@ impl Plugin for WorldPlugin {
 pub struct Shapes {
     pub circle: Handle<Mesh>,
     pub square: Handle<Mesh>,
-    pub tri: Handle<Mesh>,
     pub ring: Handle<Mesh>,
-    pub thin_ring: Handle<Mesh>,
-    pub hex: Handle<Mesh>,
     /// Halo doux : disque blanc dont l'opacité s'éteint vers le bord (texture créée en mémoire).
     pub glow: Handle<Image>,
+    /// Anneau doux (ondes de choc, repère du prochain bouclier).
+    pub ring_tex: Handle<Image>,
 }
 
 /// Cache de matériaux par couleur, pour ne pas créer un asset par forme.
@@ -73,19 +64,17 @@ impl Palette {
     }
 }
 
-/// Texture du halo : 64 × 64, blanche, opacité en cloche du centre vers le bord.
-fn glow_image() -> Image {
-    const N: usize = 64;
-    let mut data = Vec::with_capacity(N * N * 4);
-    for y in 0..N {
-        for x in 0..N {
-            let p = (Vec2::new(x as f32, y as f32) + 0.5) / (N as f32 / 2.0) - 1.0;
-            let k = (1.0 - p.length()).clamp(0.0, 1.0);
-            data.extend_from_slice(&[255, 255, 255, (k * k * 255.0) as u8]);
+/// Texture blanche carrée dont l'opacité suit `alpha(distance au centre)` (1 = bord).
+fn radial_image(n: usize, alpha: impl Fn(f32) -> f32) -> Image {
+    let mut data = Vec::with_capacity(n * n * 4);
+    for y in 0..n {
+        for x in 0..n {
+            let p = (Vec2::new(x as f32, y as f32) + 0.5) / (n as f32 / 2.0) - 1.0;
+            data.extend_from_slice(&[255, 255, 255, (alpha(p.length()).clamp(0.0, 1.0) * 255.0) as u8]);
         }
     }
     Image::new(
-        Extent3d { width: N as u32, height: N as u32, depth_or_array_layers: 1 },
+        Extent3d { width: n as u32, height: n as u32, depth_or_array_layers: 1 },
         TextureDimension::D2,
         data,
         TextureFormat::Rgba8UnormSrgb,
@@ -95,17 +84,13 @@ fn glow_image() -> Image {
 
 fn setup_shapes(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut images: ResMut<Assets<Image>>) {
     commands.insert_resource(Shapes {
-        glow: images.add(glow_image()),
+        // Halo : opacité en cloche du centre vers le bord.
+        glow: images.add(radial_image(64, |d| (1.0 - d).max(0.0).powi(2))),
+        // Anneau : trait doux à 86 % du rayon.
+        ring_tex: images.add(radial_image(128, |d| 1.0 - ((d - 0.86) / 0.07).powi(2))),
         circle: meshes.add(Circle::new(1.0)),
         square: meshes.add(Rectangle::new(1.0, 1.0)),
-        tri: meshes.add(Triangle2d::new(
-            Vec2::new(-0.5, -0.5),
-            Vec2::new(0.5, -0.5),
-            Vec2::new(0.0, 0.5),
-        )),
         ring: meshes.add(Annulus::new(0.88, 1.0)),
-        thin_ring: meshes.add(Annulus::new(0.965, 1.0)),
-        hex: meshes.add(RegularPolygon::new(1.0, 6)),
     });
 }
 
@@ -142,16 +127,8 @@ impl Draw<'_> {
         let m = self.shapes.square.clone();
         self.bundle(&m, color, pos, z, size, rot)
     }
-    pub fn tri(&mut self, color: Color, pos: Vec2, z: f32, size: Vec2, rot: f32) -> ShapeBundle {
-        let m = self.shapes.tri.clone();
-        self.bundle(&m, color, pos, z, size, rot)
-    }
     pub fn ring(&mut self, color: Color, pos: Vec2, z: f32, r: f32) -> ShapeBundle {
         let m = self.shapes.ring.clone();
-        self.bundle(&m, color, pos, z, Vec2::splat(r), 0.0)
-    }
-    pub fn thin_ring(&mut self, color: Color, pos: Vec2, z: f32, r: f32) -> ShapeBundle {
-        let m = self.shapes.thin_ring.clone();
         self.bundle(&m, color, pos, z, Vec2::splat(r), 0.0)
     }
     /// Halo lumineux de rayon `r` (un sprite : tous les halos partent dans le même lot).
@@ -165,10 +142,6 @@ impl Draw<'_> {
             },
             Transform::from_translation(pos.extend(z)).with_scale(Vec3::new(r, r, 1.0)),
         )
-    }
-    pub fn hex(&mut self, color: Color, pos: Vec2, z: f32, r: f32) -> ShapeBundle {
-        let m = self.shapes.hex.clone();
-        self.bundle(&m, color, pos, z, Vec2::splat(r), 0.0)
     }
 }
 
@@ -206,6 +179,10 @@ pub struct Enemy {
     pub radius: f32,
 }
 
+/// Dessin du bouclier d'une plateforme (s'écrase brièvement quand on y atterrit).
+#[derive(Component)]
+pub struct Bounce(pub f32);
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum BonusKind {
     Hammer,
@@ -240,6 +217,8 @@ pub struct Bob {
 
 pub struct TrackEntry {
     pub entity: Entity,
+    /// Entité du dessin du bouclier.
+    pub visual: Entity,
     pub pos: Vec2,
     pub index: u32,
     /// Nom de la créature si elle apparaît ici pour la première fois (annoncé par le HUD).
@@ -256,6 +235,9 @@ pub struct Track {
 impl Track {
     pub fn pos(&self, index: u32) -> Option<Vec2> {
         self.platforms.iter().find(|p| p.index == index).map(|p| p.pos)
+    }
+    pub fn visual(&self, index: u32) -> Option<Entity> {
+        self.platforms.iter().find(|p| p.index == index).map(|p| p.visual)
     }
     pub fn announce(&self, index: u32) -> Option<&'static str> {
         self.platforms.iter().find(|p| p.index == index).and_then(|p| p.announce)
@@ -346,6 +328,7 @@ fn reset_world(
     mut seen: ResMut<Seen>,
     mut score: ResMut<Score>,
     shapes: Res<Shapes>,
+    art: Res<Art>,
     mut palette: ResMut<Palette>,
     mut mats: ResMut<Assets<ColorMaterial>>,
     mut cams: Query<&mut Transform, With<PlayerCam>>,
@@ -366,9 +349,9 @@ fn reset_world(
     };
     // `VIKING_START=n` permet de démarrer directement au niveau n (tests).
     let start = std::env::var("VIKING_START").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
-    spawn_platform(&mut commands, &mut draw, &mut track, &mut seen, start, Vec2::ZERO);
+    spawn_platform(&mut commands, &mut draw, &art, &mut track, &mut seen, start, Vec2::ZERO);
     // Le joueur 1 est visible dès le menu ; le joueur 2 arrive au lancement d'une partie à deux.
-    player::spawn_player(&mut commands, &mut draw, Vec2::ZERO, start, 0);
+    player::spawn_player(&mut commands, &mut draw, &art, Vec2::ZERO, start, 0);
 }
 
 /// Au lancement d'une partie à deux, ajoute le second viking et écarte les deux sur le bouclier.
@@ -376,6 +359,7 @@ fn spawn_missing_players(
     mut commands: Commands,
     mode: Res<GameMode>,
     shapes: Res<Shapes>,
+    art: Res<Art>,
     mut palette: ResMut<Palette>,
     mut mats: ResMut<Assets<ColorMaterial>>,
     mut players: Query<(&Player, &mut Transform)>,
@@ -395,7 +379,7 @@ fn spawn_missing_players(
     }
     for id in existing..mode.players {
         let pos = player::stand_offset(id, mode.players);
-        player::spawn_player(&mut commands, &mut draw, pos, start, id);
+        player::spawn_player(&mut commands, &mut draw, &art, pos, start, id);
     }
 }
 
@@ -404,6 +388,7 @@ fn extend_track(
     mut track: ResMut<Track>,
     mut seen: ResMut<Seen>,
     shapes: Res<Shapes>,
+    art: Res<Art>,
     mut palette: ResMut<Palette>,
     mut mats: ResMut<Assets<ColorMaterial>>,
     cams: Query<(&Transform, &Projection, &Camera), With<PlayerCam>>,
@@ -440,7 +425,7 @@ fn extend_track(
         let hi = (track.last.x + 220.0).min(230.0);
         let x = rng.random_range(lo..hi);
         let pos = Vec2::new(x, track.last.y + gap);
-        spawn_platform(&mut commands, &mut draw, &mut track, &mut seen, n, pos);
+        spawn_platform(&mut commands, &mut draw, &art, &mut track, &mut seen, n, pos);
     }
     // Nettoyage des plateformes passées.
     let mut i = 0;
@@ -457,6 +442,7 @@ fn extend_track(
 fn spawn_platform(
     commands: &mut Commands,
     draw: &mut Draw,
+    art: &Art,
     track: &mut Track,
     seen: &mut Seen,
     index: u32,
@@ -464,10 +450,6 @@ fn spawn_platform(
 ) {
     let mut rng = rand::rng();
     let spec = difficulty(index, &mut rng);
-    let face = SHIELD_COLORS[index as usize % SHIELD_COLORS.len()];
-    let dark = face.darker(0.12);
-    let iron = Color::srgb(0.42, 0.44, 0.48);
-    let iron_light = Color::srgb(0.72, 0.74, 0.78);
 
     let root = commands
         .spawn((
@@ -477,6 +459,10 @@ fn spawn_platform(
             Visibility::default(),
         ))
         .id();
+
+    // Bouclier : un seul maillage (planches, motif peint, cerclage, rivets).
+    let visual = commands.spawn(art.at(art.shield(index), Vec2::ZERO, 1.0)).id();
+    commands.entity(root).add_child(visual);
 
     let mut label: Option<&'static str> = None;
     let kind_bit = 1 << (if spec.serpent { 5 } else { spec.kind as u32 });
@@ -488,23 +474,10 @@ fn spawn_platform(
     }
 
     commands.entity(root).with_children(|p| {
-        // Chemins d'orbite.
-        let path = Color::srgba(0.8, 0.85, 1.0, 0.13);
-        p.spawn(draw.thin_ring(path, Vec2::ZERO, 0.5, ORBIT_R));
+        // Chemins d'orbite en pointillés.
+        p.spawn(art.scaled(&art.orbit, Vec2::ZERO, 0.5, ORBIT_R));
         if spec.second_ring > 0 {
-            p.spawn(draw.thin_ring(path, Vec2::ZERO, 0.5, ORBIT_R2));
-        }
-        // Bouclier.
-        p.spawn(draw.circle(Color::srgba(0.0, 0.0, 0.05, 0.45), Vec2::new(5.0, -7.0), 0.8, PLATFORM_R));
-        p.spawn(draw.circle(face, Vec2::ZERO, 1.0, PLATFORM_R));
-        p.spawn(draw.rect(dark, Vec2::ZERO, 1.1, Vec2::new(PLATFORM_R * 1.9, 7.0), 0.0));
-        p.spawn(draw.rect(dark, Vec2::ZERO, 1.1, Vec2::new(7.0, PLATFORM_R * 1.9), 0.0));
-        p.spawn(draw.ring(iron, Vec2::ZERO, 1.2, PLATFORM_R));
-        p.spawn(draw.circle(iron, Vec2::ZERO, 1.3, 11.0));
-        p.spawn(draw.circle(iron_light, Vec2::new(-3.0, 3.0), 1.4, 4.0));
-        for k in 0..8 {
-            let a = k as f32 * TAU / 8.0 + PI / 8.0;
-            p.spawn(draw.circle(iron_light, Vec2::from_angle(a) * (PLATFORM_R - 3.5), 1.3, 2.4));
+            p.spawn(art.scaled(&art.orbit, Vec2::ZERO, 0.5, ORBIT_R2));
         }
 
         // Créatures.
@@ -528,7 +501,7 @@ fn spawn_platform(
                     Transform::default(),
                     Visibility::default(),
                 ))
-                .with_children(|q| enemy_visual(q, draw, kind, seg));
+                .with_children(|q| enemy_visual(q, draw, art, kind, seg));
             }
         } else {
             let base_dir = if rng.random_bool(0.5) { 1.0 } else { -1.0 };
@@ -548,7 +521,7 @@ fn spawn_platform(
                     Transform::default(),
                     Visibility::default(),
                 ))
-                .with_children(|q| enemy_visual(q, draw, spec.kind, i as usize));
+                .with_children(|q| enemy_visual(q, draw, art, spec.kind, i as usize));
             }
             for i in 0..spec.second_ring {
                 p.spawn((
@@ -564,7 +537,7 @@ fn spawn_platform(
                     Transform::default(),
                     Visibility::default(),
                 ))
-                .with_children(|q| enemy_visual(q, draw, EnemyKind::Raven, i as usize + 3));
+                .with_children(|q| enemy_visual(q, draw, art, EnemyKind::Raven, i as usize + 3));
             }
         }
 
@@ -576,59 +549,37 @@ fn spawn_platform(
                 Transform::from_xyz(0.0, 30.0, 3.0),
                 Visibility::default(),
             ))
-            .with_children(|q| bonus_visual(q, draw, kind));
+            .with_children(|q| bonus_visual(q, draw, art, kind));
         }
     });
 
-    track.platforms.push(TrackEntry { entity: root, pos, index, announce: label });
+    track.platforms.push(TrackEntry { entity: root, visual, pos, index, announce: label });
     track.next = index + 1;
     track.last = pos;
 }
 
 // ---------- visuels ----------
 
-fn enemy_visual(q: &mut ChildSpawnerCommands, d: &mut Draw, kind: EnemyKind, seed: usize) {
+/// Une créature : corps cuit en un maillage, plus les seuls morceaux qui bougent ou brillent.
+fn enemy_visual(q: &mut ChildSpawnerCommands, d: &mut Draw, art: &Art, kind: EnemyKind, seed: usize) {
     let s = seed as f32;
+    let z = 2.0;
+    let o = Vec2::ZERO;
     match kind {
         EnemyKind::Raven => {
-            // Plumage bleu nuit cerné de clair pour rester lisible sur le ciel.
-            let feather = Color::srgb(0.16, 0.20, 0.34);
-            let edge = Color::srgb(0.75, 0.82, 1.0);
-            let z = 2.0;
-            q.spawn(d.glow(Color::srgba(0.7, 0.85, 1.0, 0.6), Vec2::ZERO, z - 0.3, 46.0));
-            q.spawn(d.ellipse(edge, Vec2::ZERO, z - 0.1, 21.0, 14.0, 0.0));
-            q.spawn(d.ellipse(feather, Vec2::ZERO, z, 18.5, 11.5, 0.0));
-            q.spawn(d.circle(edge, Vec2::new(16.0, 6.0), z + 0.05, 11.0));
-            q.spawn(d.circle(feather, Vec2::new(16.0, 6.0), z + 0.1, 9.0));
-            q.spawn(d.tri(Color::srgb(1.0, 0.72, 0.15), Vec2::new(28.0, 5.0), z + 0.1, Vec2::new(9.0, 13.0), -PI / 2.0));
-            q.spawn(d.circle(Color::WHITE, Vec2::new(18.0, 8.5), z + 0.2, 3.6));
-            q.spawn(d.circle(Color::srgb(0.05, 0.05, 0.1), Vec2::new(19.2, 8.5), z + 0.3, 1.8));
-            for x in [-4.0, 2.0] {
-                q.spawn(d.rect(Color::srgb(1.0, 0.72, 0.15), Vec2::new(x, -13.0), z - 0.05, Vec2::new(2.5, 7.0), 0.0));
-            }
+            q.spawn(d.glow(Color::srgba(0.7, 0.85, 1.0, 0.6), o, z - 0.3, 46.0));
             for side in [1.0, -1.0] {
                 let base = if side > 0.0 { 0.0 } else { PI };
-                q.spawn((
-                    d.tri(edge, Vec2::new(-4.0, side * 8.0), z - 0.2, Vec2::new(22.0, 30.0), base),
-                    Wobble { amp: 0.55, freq: 9.0, phase: s, base },
-                ));
-                q.spawn((
-                    d.tri(feather, Vec2::new(-4.0, side * 8.0), z - 0.15, Vec2::new(17.0, 25.0), base),
-                    Wobble { amp: 0.55, freq: 9.0, phase: s, base },
-                ));
+                let mut wing = art.at(&art.raven_wing, Vec2::new(-4.0, side * 8.0), z - 0.2);
+                wing.2.rotation = Quat::from_rotation_z(base);
+                q.spawn((wing, Wobble { amp: 0.55, freq: 9.0, phase: s, base }));
             }
+            q.spawn(art.at(&art.raven_body, o, z));
         }
         EnemyKind::Draugr => {
-            let skin = Color::srgb(0.30, 0.52, 0.30);
-            let z = 2.0;
-            q.spawn(d.glow(Color::srgba(0.45, 1.0, 0.45, 0.5), Vec2::ZERO, z - 0.2, 42.0));
-            q.spawn(d.circle(skin, Vec2::ZERO, z, 16.0));
-            q.spawn(d.rect(skin.darker(0.1), Vec2::new(0.0, -10.0), z + 0.1, Vec2::new(18.0, 8.0), 0.0));
-            for k in 0..3 {
-                q.spawn(d.rect(Color::srgb(0.95, 0.95, 0.85), Vec2::new(-5.0 + k as f32 * 5.0, -8.0), z + 0.2, Vec2::new(3.0, 4.0), 0.0));
-            }
+            q.spawn(d.glow(Color::srgba(0.45, 1.0, 0.45, 0.5), o, z - 0.2, 42.0));
+            q.spawn(art.at(&art.draugr, o, z));
             for side in [-1.0, 1.0] {
-                q.spawn(d.circle(Color::srgb(0.05, 0.1, 0.05), Vec2::new(side * 6.0, 3.0), z + 0.1, 4.5));
                 q.spawn((
                     d.circle(Color::srgb(1.0, 0.2, 0.1), Vec2::new(side * 6.0, 3.0), z + 0.2, 2.2),
                     Wobble { amp: 0.0, freq: 3.5, phase: s, base: 0.0 },
@@ -636,93 +587,36 @@ fn enemy_visual(q: &mut ChildSpawnerCommands, d: &mut Draw, kind: EnemyKind, see
             }
         }
         EnemyKind::Wolf => {
-            let fur = Color::srgb(0.55, 0.57, 0.62);
-            let z = 2.0;
-            q.spawn(d.circle(fur, Vec2::ZERO, z, 15.0));
-            q.spawn(d.ellipse(fur.lighter(0.08), Vec2::new(11.0, -3.0), z + 0.1, 9.0, 6.5, 0.0));
-            q.spawn(d.circle(Color::srgb(0.1, 0.1, 0.1), Vec2::new(18.0, -2.0), z + 0.2, 3.0));
-            q.spawn(d.tri(fur.darker(0.1), Vec2::new(-7.0, 12.0), z - 0.1, Vec2::new(9.0, 13.0), 0.2));
-            q.spawn(d.tri(fur.darker(0.1), Vec2::new(3.0, 13.0), z - 0.1, Vec2::new(9.0, 13.0), -0.2));
-            for x in [-3.0, 6.0] {
-                q.spawn(d.circle(Color::srgb(1.0, 0.85, 0.2), Vec2::new(x, 4.0), z + 0.2, 2.8));
-                q.spawn(d.circle(Color::BLACK, Vec2::new(x + 0.8, 4.0), z + 0.3, 1.3));
-            }
-            q.spawn(d.tri(Color::WHITE, Vec2::new(12.0, -9.0), z + 0.2, Vec2::new(3.0, 5.0), PI));
+            q.spawn(art.at(&art.wolf, o, z));
         }
         EnemyKind::Kraken => {
             let purple = Color::srgb(0.48, 0.18, 0.55);
-            let z = 2.0;
-            q.spawn(d.glow(Color::srgba(0.85, 0.5, 1.0, 0.4), Vec2::ZERO, z - 0.2, 40.0));
+            q.spawn(d.glow(Color::srgba(0.85, 0.5, 1.0, 0.4), o, z - 0.2, 40.0));
             for (i, a) in [-0.9_f32, -0.3, 0.3, 0.9].iter().enumerate() {
                 q.spawn((
                     d.rect(purple.darker(0.05), Vec2::from_angle(*a + PI) * 18.0, z - 0.1, Vec2::new(7.0, 26.0), *a + PI / 2.0),
                     Wobble { amp: 0.35, freq: 4.0 + i as f32, phase: s + i as f32, base: *a + PI / 2.0 },
                 ));
             }
-            q.spawn(d.circle(purple, Vec2::ZERO, z, 15.0));
-            q.spawn(d.ellipse(purple.lighter(0.1), Vec2::new(0.0, 6.0), z + 0.1, 12.0, 8.0, 0.0));
-            for x in [-5.0, 5.0] {
-                q.spawn(d.circle(Color::srgb(1.0, 0.95, 0.5), Vec2::new(x, 0.0), z + 0.2, 3.5));
-                q.spawn(d.ellipse(Color::BLACK, Vec2::new(x, 0.0), z + 0.3, 1.2, 2.8, 0.0));
-            }
+            q.spawn(art.at(&art.kraken, o, z));
         }
         EnemyKind::Jotunn => {
-            let ice = Color::srgb(0.62, 0.82, 0.95);
-            let z = 2.0;
-            q.spawn(d.glow(Color::srgba(0.75, 0.93, 1.0, 0.6), Vec2::ZERO, z - 0.2, 44.0));
-            q.spawn(d.hex(ice, Vec2::ZERO, z, 18.0));
-            q.spawn(d.hex(ice.lighter(0.1), Vec2::new(-2.0, 2.0), z + 0.05, 12.0));
-            for (x, h) in [(-9.0, 10.0), (0.0, 15.0), (8.0, 11.0)] {
-                q.spawn(d.tri(Color::srgb(0.9, 0.98, 1.0), Vec2::new(x, 16.0 + h * 0.3), z - 0.1, Vec2::new(6.0, h), 0.0));
-            }
-            for x in [-5.0, 5.0] {
-                q.spawn(d.circle(Color::srgb(0.05, 0.15, 0.45), Vec2::new(x, 2.0), z + 0.2, 2.6));
-            }
-            q.spawn(d.rect(Color::srgb(0.05, 0.15, 0.45), Vec2::new(0.0, -7.0), z + 0.2, Vec2::new(10.0, 2.0), 0.0));
+            q.spawn(d.glow(Color::srgba(0.75, 0.93, 1.0, 0.6), o, z - 0.2, 44.0));
+            q.spawn(art.at(&art.jotunn, o, z));
         }
         EnemyKind::SerpentHead => {
-            let green = Color::srgb(0.18, 0.55, 0.30);
-            let z = 2.5;
-            q.spawn(d.glow(Color::srgba(0.4, 1.0, 0.5, 0.4), Vec2::ZERO, z - 0.2, 44.0));
-            q.spawn(d.ellipse(green, Vec2::ZERO, z, 21.0, 16.0, 0.0));
-            q.spawn(d.tri(Color::srgb(0.95, 0.3, 0.2), Vec2::new(26.0, 0.0), z - 0.1, Vec2::new(5.0, 16.0), -PI / 2.0));
-            for y in [-6.0, 6.0] {
-                q.spawn(d.circle(Color::srgb(1.0, 0.85, 0.1), Vec2::new(8.0, y), z + 0.1, 3.6));
-                q.spawn(d.ellipse(Color::BLACK, Vec2::new(8.5, y), z + 0.2, 1.2, 3.0, 0.0));
-            }
-            for y in [-9.0, 9.0] {
-                q.spawn(d.tri(Color::WHITE, Vec2::new(17.0, y), z + 0.1, Vec2::new(3.0, 6.0), -PI / 2.0));
-            }
+            q.spawn(d.glow(Color::srgba(0.4, 1.0, 0.5, 0.4), o, 2.3, 44.0));
+            q.spawn(art.at(&art.serpent_head, o, 2.5));
         }
         EnemyKind::SerpentBody => {
-            let shade = if seed % 2 == 0 { Color::srgb(0.18, 0.5, 0.28) } else { Color::srgb(0.25, 0.62, 0.34) };
-            let z = 2.4 - seed as f32 * 0.02;
-            q.spawn(d.circle(shade, Vec2::ZERO, z, 14.0));
-            q.spawn(d.ring(shade.darker(0.12), Vec2::ZERO, z + 0.05, 14.0));
+            q.spawn(art.at(&art.serpent_body[seed % 2], o, 2.4 - s * 0.02));
         }
     }
 }
 
-fn bonus_visual(q: &mut ChildSpawnerCommands, d: &mut Draw, kind: BonusKind) {
+fn bonus_visual(q: &mut ChildSpawnerCommands, d: &mut Draw, art: &Art, kind: BonusKind) {
     q.spawn(d.glow(Color::srgba(1.0, 0.92, 0.55, 0.8), Vec2::ZERO, 0.0, 42.0));
-    match kind {
-        BonusKind::Hammer => {
-            q.spawn(d.rect(Color::srgb(0.45, 0.28, 0.14), Vec2::new(0.0, -6.0), 0.1, Vec2::new(5.0, 22.0), 0.0));
-            q.spawn(d.rect(Color::srgb(0.75, 0.78, 0.85), Vec2::new(0.0, 7.0), 0.2, Vec2::new(22.0, 12.0), 0.0));
-            q.spawn(d.rect(Color::srgb(0.95, 0.85, 0.4), Vec2::new(0.0, 7.0), 0.3, Vec2::new(4.0, 8.0), 0.0));
-        }
-        BonusKind::Shield => {
-            q.spawn(d.circle(Color::srgb(0.2, 0.5, 0.95), Vec2::ZERO, 0.1, 13.0));
-            q.spawn(d.ring(Color::srgb(0.9, 0.95, 1.0), Vec2::ZERO, 0.2, 13.0));
-            q.spawn(d.rect(Color::srgb(0.9, 0.95, 1.0), Vec2::ZERO, 0.3, Vec2::new(3.0, 18.0), 0.0));
-            q.spawn(d.rect(Color::srgb(0.9, 0.95, 1.0), Vec2::new(0.0, 3.0), 0.3, Vec2::new(12.0, 3.0), 0.0));
-        }
-        BonusKind::Mead => {
-            q.spawn(d.tri(Color::srgb(0.93, 0.88, 0.75), Vec2::new(0.0, -2.0), 0.1, Vec2::new(16.0, 26.0), PI + 0.35));
-            q.spawn(d.ellipse(Color::srgb(0.95, 0.72, 0.2), Vec2::new(-4.0, 9.0), 0.2, 9.0, 4.0, 0.35));
-            q.spawn(d.circle(Color::srgb(1.0, 0.95, 0.8), Vec2::new(-6.0, 12.0), 0.3, 3.0));
-        }
-    }
+    q.spawn(art.at(art.bonus(kind), Vec2::ZERO, 0.1));
 }
 
 // ---------- animation ----------
@@ -755,6 +649,21 @@ fn animate_wobble(time: Res<Time>, mut q: Query<(&Wobble, &mut Transform)>) {
             // Pulsation d'échelle (yeux).
             let s = 1.0 + 0.2 * (t * w.freq + w.phase).sin();
             tf.scale = Vec3::new(2.2 * s, 2.2 * s, 1.0);
+        }
+    }
+}
+
+/// Le bouclier s'enfonce et revient quand un viking s'y pose.
+fn animate_bounce(mut commands: Commands, time: Res<Time>, mut q: Query<(Entity, &mut Bounce, &mut Transform)>) {
+    for (e, mut bounce, mut tf) in &mut q {
+        bounce.0 += time.delta_secs();
+        let k = bounce.0 / 0.3;
+        if k >= 1.0 {
+            tf.scale = Vec3::ONE;
+            commands.entity(e).remove::<Bounce>();
+        } else {
+            let s = 1.0 - 0.1 * (k * PI).sin() * (1.0 - k);
+            tf.scale = Vec3::new(s, s, 1.0);
         }
     }
 }

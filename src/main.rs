@@ -4,6 +4,7 @@
 //! qui tournent autour. Inspiré du "Cochon d'Halloween", version viking.
 //! Seul ou à deux en écran partagé (clavier, souris, tactile ou manettes).
 
+mod art;
 mod audio;
 #[cfg(not(target_arch = "wasm32"))]
 mod autotest;
@@ -140,6 +141,7 @@ fn main() {
     .init_resource::<AutoStart>()
     .init_resource::<AutoJump>()
     .add_plugins((
+        art::ArtPlugin,
         audio::SfxPlugin,
         input::InputPlugin,
         world::WorldPlugin,

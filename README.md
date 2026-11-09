@@ -85,6 +85,12 @@ des créatures devient irrégulière.
 - Ciel à petit budget : l'aurore est un seul maillage à couleurs de sommets (redessiné à chaque
   frame), le dégradé du ciel et la vignette sont deux quadrilatères, et tous les halos partagent une
   texture de 64 × 64 créée en mémoire. Pas de post-traitement.
+- Dessins « cuits » : chaque bouclier, créature, bonus ou viking est assemblé une fois au démarrage
+  en un seul maillage à couleurs de sommets (`src/art.rs`), partagé par toutes ses copies. Un
+  bouclier compte ainsi 3 ou 4 entités au lieu de 18, et le GPU dessine les copies par lots.
+- Décor d'altitude en parallaxe : des branches d'Yggdrasil entrent par les bords vers le niveau 12,
+  le Bifröst apparaît au-delà du niveau 30 ; une douzaine d'emplacements par caméra, recyclés au
+  fil de la montée.
 - Aucun asset externe : tout est dessiné avec des primitives (`Mesh2d`) et les sons
   (cors, tambours, chocs, tonnerre) sont synthétisés en mémoire au démarrage (`src/audio.rs`).
 - Polices : titres et chiffres en *Luminari* (système) sur macOS, sinon en Fira Sans Bold embarquée
@@ -92,6 +98,8 @@ des créatures devient irrégulière.
   toujours en Fira Sans, plus lisible en petit.
 - `VIKING_WINDOW=390x844 cargo run` ouvre une fenêtre au format téléphone portrait.
 - `VIKING_START=30 cargo run` démarre directement au niveau 30.
+- `VIKING_ALTITUDE=8000 cargo run` montre tout de suite le décor des hauteurs (branches dès 2800,
+  Bifröst dès 7000).
 - `VIKING_AUTOTEST=<dossier> cargo run` joue tout seul et enregistre des captures d'écran
   (utilisé pour vérifier le rendu).
 
@@ -100,10 +108,11 @@ des créatures devient irrégulière.
 | Fichier | Rôle |
 |---|---|
 | `src/main.rs` | États, ressources, caméra, sauvegarde du record |
-| `src/world.rs` | Boucliers, créatures, bonus, génération et difficulté |
+| `src/art.rs` | Dessins cuits en maillages : boucliers, créatures, bonus, vikings |
+| `src/world.rs` | Piste de boucliers, créatures en orbite, bonus, génération et difficulté |
 | `src/input.rs` | Clavier, souris, tactile, manettes : attribution aux joueurs |
 | `src/player.rs` | Sauts, collisions, pouvoirs, mort, caméras (une par joueur) |
-| `src/fx.rs` | Ciel dégradé, lune, aurore boréale, neige, fjord, drakkar, particules, vignette, Ragnarök |
+| `src/fx.rs` | Ciel, lune, aurore, décor en parallaxe, montagnes, fjord, drakkar, particules, ondes, Ragnarök |
 | `src/ui.rs` | Menu, HUD, écran de fin |
 | `src/audio.rs` | Synthèse des sons et encodage WAV |
 | `src/autotest.rs` | Mode de test automatique (hors web) |

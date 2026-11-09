@@ -3,9 +3,9 @@
 use crate::audio::{Sfx, SfxBank};
 use crate::fx::{self, Ragnarok};
 use crate::input::Inputs;
-use crate::world::{Bonus, BonusKind, Draw, Enemy, Orbiter, Track, PLAYER_R};
+use crate::art::Art;
+use crate::world::{Bonus, BonusKind, Bounce, Draw, Enemy, Orbiter, Shapes, Track, PLATFORM_R, PLAYER_R};
 use crate::{save_best, AutoJump, CamShake, GameEntity, GameFont, GameMode, GameState, PlayerCam, Powers, Score};
-use bevy::color::Luminance;
 use bevy::prelude::*;
 use rand::RngExt;
 use std::f32::consts::{PI, TAU};
@@ -51,6 +51,10 @@ struct ShieldAura;
 #[derive(Component)]
 struct HammerGlow;
 
+/// Anneau qui désigne le prochain bouclier du joueur.
+#[derive(Component)]
+struct TargetMarker(u8);
+
 pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
@@ -68,7 +72,7 @@ impl Plugin for PlayerPlugin {
                 .chain()
                 .run_if(in_state(GameState::Playing)),
         )
-        .add_systems(Update, (camera_follow, aura_visibility));
+        .add_systems(Update, (camera_follow, aura_visibility, target_markers));
     }
 }
 
@@ -81,15 +85,7 @@ pub fn stand_offset(id: u8, players: u8) -> Vec2 {
     }
 }
 
-pub fn spawn_player(commands: &mut Commands, d: &mut Draw, pos: Vec2, on: u32, id: u8) {
-    let skin = Color::srgb(0.95, 0.78, 0.62);
-    // Joueur 1 : cape rouge et barbe rousse. Joueur 2 : cape bleue et barbe brune.
-    let (cape, tunic, beard) = if id == 0 {
-        (Color::srgb(0.6, 0.12, 0.12), Color::srgb(0.45, 0.30, 0.16), Color::srgb(0.85, 0.42, 0.12))
-    } else {
-        (Color::srgb(0.12, 0.3, 0.7), Color::srgb(0.30, 0.32, 0.40), Color::srgb(0.35, 0.20, 0.10))
-    };
-    let iron = Color::srgb(0.55, 0.58, 0.64);
+pub fn spawn_player(commands: &mut Commands, d: &mut Draw, art: &Art, pos: Vec2, on: u32, id: u8) {
     let z = 5.0 + id as f32 * 0.5;
     commands
         .spawn((
@@ -128,37 +124,21 @@ pub fn spawn_player(commands: &mut Commands, d: &mut Draw, pos: Vec2, on: u32, i
                 HammerGlow,
                 Visibility::Hidden,
             ));
-            // Cape.
-            p.spawn(d.tri(cape, Vec2::new(-4.0, -6.0), -0.2, Vec2::new(30.0, 34.0), PI + 0.3));
-            // Jambes et bottes.
-            for x in [-6.0, 6.0] {
-                p.spawn(d.rect(Color::srgb(0.25, 0.18, 0.12), Vec2::new(x, -19.0), 0.0, Vec2::new(8.0, 10.0), 0.0));
-                p.spawn(d.rect(Color::srgb(0.2, 0.12, 0.08), Vec2::new(x, -25.0), 0.1, Vec2::new(10.0, 5.0), 0.0));
-            }
-            // Corps, ceinture, fourrure.
-            p.spawn(d.rect(tunic, Vec2::new(0.0, -6.0), 0.1, Vec2::new(26.0, 24.0), 0.0));
-            p.spawn(d.rect(Color::srgb(0.2, 0.14, 0.08), Vec2::new(0.0, -11.0), 0.2, Vec2::new(26.0, 5.0), 0.0));
-            p.spawn(d.circle(Color::srgb(0.85, 0.75, 0.55), Vec2::new(0.0, -11.0), 0.3, 3.0));
-            p.spawn(d.ellipse(Color::srgb(0.65, 0.5, 0.35), Vec2::new(0.0, 4.0), 0.2, 16.0, 5.0, 0.0));
-            // Tête, barbe, yeux.
-            p.spawn(d.circle(skin, Vec2::new(0.0, 13.0), 0.3, 11.0));
-            p.spawn(d.circle(beard, Vec2::new(0.0, 6.0), 0.4, 9.5));
-            p.spawn(d.rect(beard, Vec2::new(0.0, 2.0), 0.4, Vec2::new(14.0, 8.0), 0.0));
-            p.spawn(d.ellipse(beard.darker(0.08), Vec2::new(0.0, 10.0), 0.5, 7.0, 2.2, 0.0));
-            for x in [-4.0, 4.0] {
-                p.spawn(d.circle(Color::WHITE, Vec2::new(x, 15.0), 0.5, 2.6));
-                p.spawn(d.circle(Color::srgb(0.1, 0.2, 0.4), Vec2::new(x + 0.6, 15.0), 0.6, 1.3));
-            }
-            // Casque et cornes.
-            p.spawn(d.ellipse(iron, Vec2::new(0.0, 20.0), 0.6, 12.5, 9.0, 0.0));
-            p.spawn(d.rect(iron.darker(0.1), Vec2::new(0.0, 17.0), 0.7, Vec2::new(25.0, 4.0), 0.0));
-            p.spawn(d.rect(iron.lighter(0.15), Vec2::new(0.0, 24.0), 0.7, Vec2::new(3.0, 8.0), 0.0));
-            p.spawn(d.tri(Color::srgb(0.96, 0.93, 0.85), Vec2::new(-14.0, 25.0), 0.5, Vec2::new(8.0, 16.0), 0.6));
-            p.spawn(d.tri(Color::srgb(0.96, 0.93, 0.85), Vec2::new(14.0, 25.0), 0.5, Vec2::new(8.0, 16.0), -0.6));
-            // Hache.
-            p.spawn(d.rect(Color::srgb(0.4, 0.26, 0.14), Vec2::new(19.0, -2.0), -0.1, Vec2::new(4.0, 34.0), -0.25));
-            p.spawn(d.tri(iron.lighter(0.1), Vec2::new(24.0, 14.0), 0.0, Vec2::new(16.0, 14.0), -PI / 2.0 - 0.25));
+            // Le viking lui-même : un seul maillage.
+            p.spawn(art.at(&art.viking[id as usize % 2], Vec2::ZERO, 0.0));
         });
+    // Repère du prochain bouclier à atteindre.
+    commands.spawn((
+        TargetMarker(id),
+        GameEntity,
+        Sprite {
+            image: d.shapes.ring_tex.clone(),
+            custom_size: Some(Vec2::splat(2.0)),
+            ..default()
+        },
+        Transform::from_xyz(0.0, 0.0, 1.6),
+        Visibility::Hidden,
+    ));
 }
 
 /// Secoue la caméra d'un joueur (ou toutes avec `None`).
@@ -216,6 +196,8 @@ fn advance_jump(
     mut ragnarok: ResMut<Ragnarok>,
     sfx: Res<SfxBank>,
     game_font: Res<GameFont>,
+    track: Res<Track>,
+    shapes: Res<Shapes>,
     mut cams: Query<(&PlayerCam, &mut CamShake)>,
     mut q: Query<(&mut Player, &mut Transform)>,
     bonuses: Query<(Entity, &Bonus)>,
@@ -273,6 +255,12 @@ fn advance_jump(
         sfx.play(&mut commands, Sfx::Land, 0.6);
         fx::burst(&mut commands, pos - Vec2::new(0.0, 20.0), Color::srgb(0.95, 0.97, 1.0), 8, 90.0, 4.0, 200.0, 0.5);
         shake(&mut cams, Some(player.id), 2.0);
+        // Le bouclier encaisse : il s'enfonce un instant et une onde s'en échappe.
+        if let Some(visual) = track.visual(player.on) {
+            commands.entity(visual).try_insert(Bounce(0.0));
+        }
+        let center = track.pos(player.on).unwrap_or(pos);
+        fx::ripple(&mut commands, &shapes, center, Color::srgba(0.85, 0.92, 1.0, 0.5), PLATFORM_R, 125.0, 0.45);
 
         if player.combo >= 2 {
             player.gold += player.combo;
@@ -451,6 +439,42 @@ fn camera_follow(
         shake.0 *= (-7.0 * dt).exp();
         tf.translation.x = off.x;
         tf.translation.y = y + off.y;
+    }
+}
+
+fn target_markers(
+    time: Res<Time>,
+    track: Res<Track>,
+    mode: Res<GameMode>,
+    state: Res<State<GameState>>,
+    players: Query<&Player>,
+    mut markers: Query<(&TargetMarker, &mut Transform, &mut Sprite, &mut Visibility)>,
+) {
+    let t = time.elapsed_secs();
+    let duo = mode.players == 2;
+    for (marker, mut tf, mut sprite, mut vis) in &mut markers {
+        let target = players
+            .iter()
+            .find(|p| p.id == marker.0 && p.alive() && !p.jumping)
+            .filter(|_| *state.get() == GameState::Playing)
+            .and_then(|p| track.pos(p.on + 1));
+        let Some(pos) = target else {
+            *vis = Visibility::Hidden;
+            continue;
+        };
+        *vis = Visibility::Inherited;
+        // Respiration lente, sans clignotement. À deux, un anneau par couleur de cape.
+        let breath = 0.5 + 0.5 * (t * 2.6).sin();
+        let r = (PLATFORM_R + 12.0 + marker.0 as f32 * 9.0 + 3.0 * breath) / 0.86;
+        tf.translation.x = pos.x;
+        tf.translation.y = pos.y;
+        tf.scale = Vec3::new(r, r, 1.0);
+        let alpha = 0.4 + 0.25 * breath;
+        sprite.color = match (duo, marker.0) {
+            (false, _) => Color::srgba(1.0, 0.9, 0.55, alpha),
+            (true, 0) => Color::srgba(1.0, 0.5, 0.4, alpha),
+            (true, _) => Color::srgba(0.45, 0.7, 1.0, alpha),
+        };
     }
 }
 
